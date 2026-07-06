@@ -1082,6 +1082,21 @@ final class WorldRenderer {
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 6)
             enc.setCullMode(.back)
         }
+
+        // first-person hand + held item, drawn over the scene like vanilla
+        // (depth-always: the viewmodel never clips into walls)
+        if game.perspective == 0, let p = game.player, p.deathTime == 0, !p.dead {
+            enc.setDepthStencilState(depthNone)
+            let bx = Int(p.x.rounded(.down)), by = Int((p.y + 1).rounded(.down)), bz = Int(p.z.rounded(.down))
+            entityRenderer.drawFirstPerson(enc, pipeline: packTargets ? entityPipelineHDR : entityPipeline,
+                                           sampler: atlasSampler, proj: proj, player: p, timeSec: timeSec,
+                                           dayLight: sky.dayLight,
+                                           skyL: world.getSkyLight(bx, by, bz),
+                                           blockL: world.getBlockLight(bx, by, bz),
+                                           gamma: settings.gamma,
+                                           ambient: Double(world.info.ambientLight) / 15)
+            enc.setDepthStencilState(depthWrite)
+        }
         enc.endEncoding()
 
         func blit(_ target: MTLTexture, _ pipeline: MTLRenderPipelineState, _ src: MTLTexture, dir: SIMD2<Float>?) {
@@ -1252,7 +1267,8 @@ final class WorldRenderer {
         for e in w.entities {
             if e.dead { continue }
             guard let ent = e as? Entity else { continue }
-            if ent.type == "player" && game.perspective == 0 { continue }
+            // only the LOCAL player hides in first person — LAN players always draw
+            if ent === game.player && game.perspective == 0 { continue }
             let dx = ent.x - camPos.x, dz = ent.z - camPos.z
             if dx * dx + dz * dz > maxD { continue }
             guard let name = modelNameFor(ent) else { continue }
@@ -1285,6 +1301,9 @@ final class WorldRenderer {
             pose.open = (ent as? Shulker)?.peekAmount ?? 0
             pose.hanging = ent.type == "bat" && ent.onGround
             pose.alpha = deathFlip > 0 ? 1 - deathFlip * 0.6 : 1
+            if let pl = ent as? Player, pl.isBlocking() {
+                pose.blockingHand = pl.useItemHand
+            }
             // blob shadow under living entities (incl. the player in 3rd person);
             // fade out as the entity rises above the ground beneath it.
             if liv != nil, let gy = groundYUnder(ix, iy, iz), iy - gy <= 6 {
@@ -1298,6 +1317,15 @@ final class WorldRenderer {
                                 time: timeSec, dayLight: dayLight,
                                 fog: (fog.0, fog.1, fog.2),
                                 gamma: game.settings.gamma, ambient: Double(w.info.ambientLight) / 15)
+            // players wear their armor and hold their items (partMats still
+            // carries this player's pose from the body draw above)
+            if let pl = ent as? Player {
+                entityRenderer.drawPlayerGear(enc, pipeline: packTargets ? entityPipelineHDR : entityPipeline,
+                                              sampler: atlasSampler, viewProj: viewProj, camPos: camPos,
+                                              player: pl, p: pose, time: timeSec, dayLight: dayLight,
+                                              fog: (fog.0, fog.1, fog.2),
+                                              gamma: game.settings.gamma, ambient: Double(w.info.ambientLight) / 15)
+            }
             // end crystal beams + lightning via line overlay
             if let c = ent as? EndCrystal, let bt = c.beamTarget {
                 drawBoxOutline(enc, viewProj, [(

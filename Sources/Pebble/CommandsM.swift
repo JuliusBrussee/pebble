@@ -6,7 +6,20 @@ import PebbleCore
 
 func runCommand(_ game: GameCore, _ raw: String) {
     if !raw.hasPrefix("/") {
-        pushChat("<You> \(raw)")
+        if let ng = game.netGuest {
+            ng.sendChat(raw)               // the host echoes it to everyone
+            pushChat("<\(ng.myName)> \(raw)")
+        } else if let nh = game.netHost {
+            let line = "<\(nh.hostName)> \(raw)"
+            pushChat(line)
+            nh.broadcastChat(line)
+        } else {
+            pushChat("<You> \(raw)")
+        }
+        return
+    }
+    if game.netGuest != nil {
+        pushChat("§cCommands only work for the host (for now).")
         return
     }
     let parts = raw.dropFirst().trimmingCharacters(in: .whitespaces)
@@ -252,6 +265,24 @@ func runCommand(_ game: GameCore, _ raw: String) {
         p.hunger = 20
         p.saturation = 20
         ok("Healed")
+    case "perspective":
+        // debug/screenshot hook: 0 first person, 1 behind, 2 front
+        game.perspective = min(2, max(0, Int(arg(0) ?? "1") ?? 1))
+        ok("Perspective \(game.perspective)")
+    case "equip":
+        // debug/screenshot hook: wear a full armor set, e.g. /equip diamond
+        var mat = arg(0) ?? "diamond"
+        if mat == "gold" { mat = "golden" }
+        let pieces = ["helmet", "chestplate", "leggings", "boots"]
+        var worn = 0
+        for (i, piece) in pieces.enumerated() {
+            if let id = iidOpt("\(mat)_\(piece)") {
+                p.armor[i] = ItemStack(id, 1)
+                worn += 1
+            }
+        }
+        if worn == 0 { return fail("No armor called \(mat)_…") }
+        ok("Equipped \(mat) armor")
     case "meshmode":
         let mode = arg(0)
         guard mode == "simple" || mode == "greedy" else { return fail("Usage: /meshmode <simple|greedy>") }

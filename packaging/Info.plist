@@ -7,11 +7,17 @@
     <key>CFBundleName</key><string>Pebble</string>
     <key>CFBundleDisplayName</key><string>Pebble</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.3</string>
-    <key>CFBundleVersion</key><string>3</string>
+    <key>CFBundleShortVersionString</key><string>1.1.0</string>
+    <key>CFBundleVersion</key><string>4</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Pebble uses the local network to find and join LAN multiplayer worlds hosted by your friends.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_pebble._tcp</string>
+    </array>
 </dict>
 </plist>

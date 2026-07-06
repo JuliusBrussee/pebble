@@ -32,7 +32,7 @@ public struct DimState: Codable {
 /// single source of truth for the app version — the title screen, the F3
 /// overlay and save records all read this (Info.plist is bumped separately
 /// at packaging time)
-public let PEBBLE_VERSION = "1.0.3"
+public let PEBBLE_VERSION = "1.1.0"
 
 /// WorldMeta + the global-state extension (baseline WorldRecord extends WorldMeta)
 public struct WorldRecord: Codable {
@@ -212,6 +212,8 @@ public final class SaveDB {
             let col = table == "worlds" ? "id" : "world"
             run("DELETE FROM \(table) WHERE \(col)=?", bind: { self.bindText($0, 1, id) })
         }
+        // LAN guests' player data rides in the player table as "worldId#name"
+        run("DELETE FROM player WHERE world LIKE ?", bind: { self.bindText($0, 1, id + "#%") })
         exec("COMMIT")
     }
 

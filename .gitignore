@@ -5,3 +5,4 @@ dist/
 *.zip
 !packaging/*.zip
 .claude/
+packaging/Faithful 32x - 1.20.1/

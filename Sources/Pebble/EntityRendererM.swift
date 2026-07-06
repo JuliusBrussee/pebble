@@ -29,6 +29,8 @@ struct EntityPose {
     var hanging = false
     var open = 0.0
     var sitting = false
+    /// players: raised-shield pose ("main" | "off" hand), nil = not blocking
+    var blockingHand: String?
 }
 
 struct EntityUniforms {
@@ -61,9 +63,13 @@ final class ModelGPU {
 }
 
 final class EntityRendererM {
-    private let device: MTLDevice
+    let device: MTLDevice
     private var geoms: [String: ModelGPU] = [:]
-    private var partMats = [simd_float4x4](repeating: matrix_identity_float4x4, count: 24)
+    var partMats = [simd_float4x4](repeating: matrix_identity_float4x4, count: 24)
+    /// armor overlays keyed "armor:<piece>:<material>" (GearRenderM)
+    var gearGeoms: [String: ModelGPU] = [:]
+    /// extruded held-item meshes keyed by item id / "shield" (GearRenderM)
+    var itemGeoms: [String: ModelGPU] = [:]
 
     init(device: MTLDevice) {
         self.device = device
@@ -72,6 +78,8 @@ final class EntityRendererM {
     /// resource-pack swap: rebuild skins (geometry is rebuilt with them)
     func resetSkins() {
         geoms.removeAll()
+        gearGeoms.removeAll()
+        itemGeoms.removeAll()
     }
 
     func geom(_ name: String) -> ModelGPU {
@@ -83,7 +91,11 @@ final class EntityRendererM {
         // image proportions agree; otherwise the procedural skin
         var skinW = built.skin.w, skinH = built.skin.h
         var pixels = built.skin.data
-        if let img = packEntityImage(built.model.packTex, stack: built.model.packTexStack,
+        if resolved == "player", let img = customPlayerSkin() {
+            skinW = img.width
+            skinH = img.height
+            pixels = img.pixels
+        } else if let img = packEntityImage(built.model.packTex, stack: built.model.packTexStack,
                                      tints: built.model.packTexTints),
            img.width * built.model.texH == img.height * built.model.texW {
             skinW = img.width
@@ -112,7 +124,7 @@ final class EntityRendererM {
     }
 
     /// compute per-part matrices by animator profile
-    private func pose(_ g: ModelGPU, _ p: EntityPose, _ time: Double) {
+    func pose(_ g: ModelGPU, _ p: EntityPose, _ time: Double) {
         let model = g.model
         let swing = p.limbSwing
         let amp = p.limbAmp
@@ -145,11 +157,19 @@ final class EntityRendererM {
                     if anim == "zombie" || (anim == "skeleton" && p.aiming) { rx = .pi / 2 + idle * 4 }
                     if p.attackSwing > 0 { rx = .pi / 2 * Foundation.sin(p.attackSwing * .pi) + 0.4 }
                     if anim == "illager" && p.crossed { rx = 0.7 }
+                    if p.blockingHand == "main" {
+                        m = mRotateY(m, -0.35)
+                        rx = 0.55
+                    }
                     m = mRotateX(m, Float(rx))
                 } else if n == "armL" {
                     var rx = walkB * 0.8
                     if anim == "zombie" { rx = .pi / 2 - idle * 4 }
                     if anim == "illager" && p.crossed { rx = 0.7 }
+                    if p.blockingHand == "off" {
+                        m = mRotateY(m, 0.35)
+                        rx = 0.55
+                    }
                     m = mRotateX(m, Float(rx))
                 } else if n == "legR" {
                     m = mRotateX(m, Float(walkA))

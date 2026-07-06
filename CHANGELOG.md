@@ -3,6 +3,49 @@
 All notable changes to Pebble. Versions follow `MAJOR.MINOR.PATCH`; the
 in-app version string comes from `PEBBLE_VERSION` (PebbleCore/Game/Saves.swift).
 
+## 1.1.0 — 2026-07-02 — multiplayer (LAN + servers + friends), custom skins, speed slider
+
+- **LAN multiplayer.** Play together on the same WiFi: the host presses
+  Esc → *Open to LAN* in any world, friends pick *Multiplayer* on the title
+  screen — no setup, worlds are discovered automatically (Bonjour). The host
+  runs the real world; guests stream it live. Building, mining, combat, item
+  pickup/drops, chat, day/night and weather all sync. Guests regenerate
+  untouched terrain from the world seed, so joining is fast even on big
+  worlds — only edited chunks travel over the wire. Covered by a full
+  host+guest protocol/e2e test suite; singleplayer simulation is
+  bit-identical to 1.0.3 (goldens unchanged).
+  Known limits (for now): guests can't use the Nether/End portals, containers
+  opened by guests don't live-sync, and commands are host-only.
+- **Standalone servers (SMP).** `pebble serve --create "My SMP"` runs a world
+  headless at 20 TPS with no host player — it stays up as long as the machine
+  does. LAN players find it under Multiplayer automatically; internet players
+  add its address under Multiplayer → *Servers* (port-forward 25585 on the
+  server's router). Console commands: `list`, `say`, `save`, `stop`; Ctrl-C
+  saves and exits cleanly.
+- **Player identity + friends.** Every player gets a permanent random id
+  minted on first launch (names can change, the id can't) — servers key
+  inventories/positions by it, so renaming yourself keeps your stuff.
+  Multiplayer → *Friends* lists your friends with live presence (online +
+  one-click Join when their game is visible on the network) and *Recent
+  Players* — everyone you've shared a world with — promotable to friends
+  with one click. No accounts, no cloud: friends live in a local JSON.
+- **Friend codes.** Multiplayer → Friends → *Copy My Code* gives you a short
+  "PEB1…" code carrying your permanent identity. Swap codes over any chat app
+  and paste with *Add By Code* — that's the whole friend request + accept,
+  no world needed, no central servers involved.
+- **Custom skins.** Title screen → *Skins…*: load any standard 64×64
+  Minecraft skin PNG, save the current skin as a template to draw on, or go
+  back to Steve. The second skin layer (hats/jackets) is baked onto the model.
+- **Visible gear.** Worn armor now shows on player bodies (all six materials,
+  real pack textures, following every walk/swing animation), held items render
+  in hands as 3D extruded sprites with the vanilla edge-forward tilt, shields
+  strap to the arm and raise when blocking — in third person and on every
+  player in multiplayer (armor + offhand sync over the wire). Plus a proper
+  first-person view: your arm (in your own skin) or held item swings, eats,
+  draws bows and blocks in the bottom-right, vanilla-style.
+- **Speed multiplier.** Options → Accessibility: run the whole simulation at
+  0.5×–3× (singleplayer only; LAN worlds share one clock).
+
 ## 1.0.3 — 2026-06-27 — gameplay bug fixes (#11)
 
 - **Mobs can no longer be hit while dying, and no longer dupe their drops.**

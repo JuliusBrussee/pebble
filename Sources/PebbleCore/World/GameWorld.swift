@@ -58,6 +58,9 @@ public struct WorldHooks {
     public var addParticles: (String, Double, Double, Double, Int, Double, Int) -> Void = { _, _, _, _, _, _, _ in }
     public var onVibration: ((Double, Double, Double, Int, EntityRef?) -> Void)?
     public var requestChunk: ((Int, Int) -> Void)?
+    /// (x, y, z, oldCell, newCell) after every real block change — LAN hosts
+    /// broadcast these to guests; nil (the default) costs nothing
+    public var onBlockChanged: ((Int, Int, Int, Int, Int) -> Void)?
 
     public init() {}
 }
@@ -209,6 +212,8 @@ public final class World {
             if sy == 0 { hooks.onSectionDirty(cx, cz, (y - 1 - info.minY) >> 4) }
             if sy == 15 { hooks.onSectionDirty(cx, cz, (y + 1 - info.minY) >> 4) }
         }
+
+        hooks.onBlockChanged?(x, y, z, old, cellV)
 
         if flags & 1 != 0 {
             updateNeighbors(x, y, z)

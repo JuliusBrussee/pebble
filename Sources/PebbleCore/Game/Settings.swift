@@ -42,6 +42,15 @@ public struct Settings: Codable {
     public var resourcePacks: [String]? = nil
     /// nil = off, "ultra" = built-in ultra preset, anything else = shader pack file name
     public var shader: String? = nil
+    /// simulation speed multiplier, 0.5–3 (nil = 1×, normal speed).
+    /// optional so settings.json files written before this field still decode
+    public var gameSpeed: Double? = nil
+    /// display name in LAN multiplayer (nil = "Player"); optional for old files
+    public var playerName: String? = nil
+    /// permanent random identity (like an XUID): names can change, this can't.
+    /// servers key inventories by it; friends lists match on it.
+    /// generated once at first boot (see GameCore.init); optional for old files
+    public var playerId: String? = nil
 
     public init() {}
 }
@@ -86,6 +95,7 @@ public func loadSettings() -> Settings {
     // hard ceiling: above 16 the full-height chunk arrays + mesh pipeline
     // dominate memory; floor of 4 keeps the world visible
     s.renderDistance = min(16, max(4, s.renderDistance))
+    if let g = s.gameSpeed { s.gameSpeed = min(3, max(0.5, g)) }
     return s
 }
 

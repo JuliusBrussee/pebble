@@ -336,11 +336,24 @@ public struct EntityGeometry {
     public let partNames: [String]
     public let model: MobModel
     public let skin: EntitySkin
+
+    public init(verts: [Float], vertexCount: Int, partNames: [String], model: MobModel, skin: EntitySkin) {
+        self.verts = verts
+        self.vertexCount = vertexCount
+        self.partNames = partNames
+        self.model = model
+        self.skin = skin
+    }
 }
 
 public func buildEntityGeometry(_ name: String) -> EntityGeometry {
     ensureModels()
-    let model = getModel(name)
+    return buildEntityGeometry(from: getModel(name), skinName: name)
+}
+
+/// build geometry for a model that is NOT in the registry (armor overlays,
+/// held-item rigs) — same output, zero effect on the frozen model table
+public func buildEntityGeometry(from model: MobModel, skinName: String) -> EntityGeometry {
     var verts: [Float] = []
     var partNames: [String] = []
     for (pi, p) in model.parts.enumerated() where pi < 24 {
@@ -381,7 +394,7 @@ public func buildEntityGeometry(_ name: String) -> EntityGeometry {
             quad(x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0, left)
         }
     }
-    let skin = EntitySkin(model.texW, model.texH, name)
+    let skin = EntitySkin(model.texW, model.texH, skinName)
     model.paint(skin)
     return EntityGeometry(verts: verts, vertexCount: verts.count / 9, partNames: partNames, model: model, skin: skin)
 }

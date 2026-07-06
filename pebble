@@ -181,12 +181,14 @@ cmd_update() {
 
 cmd_run()  { open "$APP" 2>/dev/null || die "Pebble isn't installed yet — run: pebble install"; }
 cmd_test() { need_swift; (cd "$REPO" && "$PEBBLE_SWIFT" run -c release pebsmoke); }
+cmd_serve() { need_swift; shift; (cd "$REPO" && "$PEBBLE_SWIFT" run -c release pebserver "$@"); }
 
 case "${1:-}" in
     install) cmd_install ;;
     update)  cmd_update ;;
     run)     cmd_run ;;
     test)    cmd_test ;;
+    serve)   cmd_serve "$@" ;;
     *)
         echo "${BOLD}pebble${RESET} — one-command install for the Pebble app"
         echo
@@ -194,5 +196,6 @@ case "${1:-}" in
         echo "  pebble update       pull the latest version and update the live app"
         echo "  pebble run          launch Pebble"
         echo "  pebble test         run the golden test suite"
+        echo "  pebble serve        run a world as a standalone server (SMP) — try: pebble serve --help"
         ;;
 esac

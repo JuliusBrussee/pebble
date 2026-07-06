@@ -52,6 +52,12 @@ public final class Player: LivingEntity {
     public var stats: [String: Double] = [:]
     public var portalTicks = 0
     public var insidePortalKind: String? = nil   // nether | end | nil
+    /// LAN guest: the host owns item/xp pickup, so the local player never
+    /// self-collects (the host sends explicit give messages instead)
+    public var netPickupSuppressed = false
+    /// LAN host: this Player is a guest's puppet — it takes damage (relayed to
+    /// the guest) but must never die here; death/drops happen on the guest
+    public var netPuppet = false
 
     public override init(world: World) {
         super.init(world: world)
@@ -90,7 +96,7 @@ public final class Player: LivingEntity {
         if sleepTicks > 0 { sleepTicks += 1 }
         if portalTicks > 0 && insidePortalKind == nil { portalTicks = max(0, portalTicks - 4) }
         // item magnet pickup
-        if age % 2 == 0 && !dead {
+        if age % 2 == 0 && !dead && !netPickupSuppressed {
             for e in world.getEntitiesNear(x, y + 0.5, z, 1.6) {
                 if let item = e as? ItemEntity, item.pickupDelay <= 0 {
                     let before = item.stack.count

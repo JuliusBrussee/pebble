@@ -39,5 +39,12 @@ let package = Package(
             path: "Sources/pebsmoke",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // dedicated LAN/SMP server: runs a world headless, no host player
+        .executableTarget(
+            name: "pebserver",
+            dependencies: ["PebbleCore"],
+            path: "Sources/pebserver",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

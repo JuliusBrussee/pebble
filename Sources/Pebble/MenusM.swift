@@ -14,7 +14,7 @@ final class TitleScreen: Screen {
         "Diamonds run deep!", "Now with wardens!", "Sculk is listening!",
         "The dragon is waiting!", "Cherry blossoms!", "Archaeology!",
         "Goats will punt you!", "Trade with villagers!", "Ride a strider!",
-        "X marks the buried treasure!", "Hero of the Village!", "Singleplayer, for now!",
+        "X marks the buried treasure!", "Hero of the Village!", "Now with LAN multiplayer!",
         "Do not stare at endermen!", "Beds explode in the Nether!", "Llamas spit back!",
         "Lava is not a swimming pool!", "Blame the goat!", "Bring a bucket!",
         "Mostly bug free!", "Creepers hate him!", "The chickens are watching!",
@@ -31,6 +31,16 @@ final class TitleScreen: Screen {
         buttons.append(Button(cx - 100, y, 200, 20, "Singleplayer", { [weak ui, weak game] in
             guard let ui, let game else { return }
             ui.open(WorldSelectScreen(), game)
+        }))
+        y += 24
+        buttons.append(Button(cx - 100, y, 200, 20, "Multiplayer", { [weak ui, weak game] in
+            guard let ui, let game else { return }
+            ui.open(MultiplayerScreen(), game)
+        }))
+        y += 24
+        buttons.append(Button(cx - 100, y, 200, 20, "Skins...", { [weak ui, weak game] in
+            guard let ui, let game else { return }
+            ui.open(SkinsScreen(), game)
         }))
         y += 24
         buttons.append(Button(cx - 100, y, 200, 20, "Credits", { [weak ui, weak game] in
@@ -318,7 +328,21 @@ final class PauseScreen: Screen {
             ui.open(SettingsScreen(), game)
         }))
         y += 24
-        buttons.append(Button(cx - 100, y, 200, 20, "Save & Quit to Title", { [weak game] in
+        let lanLabel = game.netHost != nil ? "LAN: Open (\(game.netHost!.guestCount) joined)"
+            : game.netGuest != nil ? "Connected to LAN Game" : "Open to LAN"
+        let lanB = Button(cx - 100, y, 200, 20, lanLabel, {})
+        lanB.enabled = game.netHost == nil && game.netGuest == nil
+        lanB.onClick = { [weak ui, weak game, weak lanB] in
+            guard let ui, let game else { return }
+            if game.startLanHost() {
+                lanB?.enabled = false
+                ui.closeTop(game)
+            }
+        }
+        buttons.append(lanB)
+        y += 24
+        let quitLabel = game.netGuest != nil ? "Leave Game" : "Save & Quit to Title"
+        buttons.append(Button(cx - 100, y, 200, 20, quitLabel, { [weak game] in
             guard let game else { return }
             game.saveAndFlush(synchronous: true)
             game.exitToTitle()
@@ -327,6 +351,10 @@ final class PauseScreen: Screen {
     override func draw(_ ui: UIManager, _ game: GameCore, _ partial: Double) {
         ui.drawDarkBg(0.5)
         ui.cv.drawTextCentered("Game Menu", ui.width / 2, (ui.height / 2).rounded(.down) - 70, 1)
+        if game.netHost != nil || game.netGuest != nil {
+            ui.cv.drawTextCentered("§7The world keeps running while this menu is open", ui.width / 2,
+                                   (ui.height / 2).rounded(.down) - 58, 1)
+        }
         ui.drawButtons(self)
     }
 }
@@ -511,6 +539,15 @@ final class SettingsScreen: Screen {
                 { [weak game] in game?.settings.darknessPulse ?? 1 },
                 { [weak game] v in
                     game?.settings.darknessPulse = v
+                    game?.applySettings()
+                }))
+            y += 22
+            sliders.append(Slider(cx - 160, y, W, 18,
+                { [weak game] in "Speed Multiplier: \(String(format: "%g", game?.settings.gameSpeed ?? 1))x" },
+                { [weak game] in ((game?.settings.gameSpeed ?? 1) - 0.5) / 2.5 },
+                { [weak game] v in
+                    // snap to quarter steps so 1x (normal) is easy to land on
+                    game?.settings.gameSpeed = ((0.5 + v * 2.5) * 4).rounded() / 4
                     game?.applySettings()
                 }))
         }

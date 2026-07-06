@@ -34,6 +34,8 @@ open class LivingEntity: Entity {
     }
     public var offHand: ItemStack?
     public var hurtTime = 0
+    /// last damage source string ("mob", "fall", …) — LAN hosts forward it
+    public var lastHurtSource: String?
     public var deathTime = 0
     public var attackCooldown = 0.0
     /// movement attributes
@@ -200,6 +202,7 @@ open class LivingEntity: Entity {
         health -= dmg
         hurtTime = 10
         invulnTicks = 10
+        lastHurtSource = source
         if let attacker {
             lastAttacker = attacker
             if attacker.isPlayer { lastHurtByPlayerTime = 100 }
@@ -213,7 +216,14 @@ open class LivingEntity: Entity {
             vy = min(vy + 0.36 * (1 - kbResist), 0.4)
         }
         world.hooks.playSound(hurtSound(), x, y, z, 1, 0.9 + Double.random(in: 0..<1) * 0.2)
-        if health <= 0 { die(source, attacker) }
+        if health <= 0 {
+            if let p = self as? Player, p.netPuppet {
+                // the guest's client decides its own death (and item drops)
+                health = 0
+            } else {
+                die(source, attacker)
+            }
+        }
         return true
     }
 
