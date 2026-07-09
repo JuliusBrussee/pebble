@@ -5,11 +5,24 @@
 //   Servers   — saved addresses for standalone pebserver worlds (SMP);
 //               works across the internet with a port-forwarded host
 // Identity is Settings.playerId (permanent); the name field is display-only.
+//
+// Talks only NetEndpoint + the portable NetBrowsing protocol — never Apple's
+// raw endpoint/socket types directly. The concrete Bonjour backend is
+// installed process-wide via NetTransportDefaults.discoveryFactory (see
+// PebbleNetApple); until something installs one, "browser" below is a no-op
+// that reports zero games rather than crashing or faking results.
 
 import AppKit
 import Foundation
-import Network
 import PebbleCore
+
+/// used only until a real discovery backend is installed — reports nothing,
+/// never claims to have found LAN games it didn't actually look for
+private final class NoDiscoveryBrowser: NetBrowsing {
+    var onUpdate: (([any NetDiscoveredService]) -> Void)?
+    func start() { onUpdate?([]) }
+    func stop() {}
+}
 
 final class MultiplayerScreen: Screen {
     let nameField = TextField(0, 0, 200, 16, "Your name")
@@ -18,8 +31,8 @@ final class MultiplayerScreen: Screen {
     let codeField = TextField(0, 0, 200, 16, "paste a friend code (PEB1…)")
 
     private var tab = "lan"
-    private let browser = NetBrowser()
-    private var found: [NetBrowser.Found] = []
+    private let browser: any NetBrowsing = NetTransportDefaults.discoveryFactory?() ?? NoDiscoveryBrowser()
+    private var found: [any NetDiscoveredService] = []
     private var status = ""
     private var statusColor = "#a0a0a0"
     private var joining: NetGuestSession?
@@ -50,7 +63,7 @@ final class MultiplayerScreen: Screen {
     }
 
     /// the discovered session (if any) hosted by this friend right now
-    private func sessionOf(_ friendId: String) -> NetBrowser.Found? {
+    private func sessionOf(_ friendId: String) -> (any NetDiscoveredService)? {
         guard !friendId.isEmpty else { return nil }
         return found.first { $0.txt["pid"] == friendId }
     }
@@ -247,7 +260,7 @@ final class MultiplayerScreen: Screen {
         return ServerEntry(name: name, host: host, port: port)
     }
 
-    private func join(_ endpoint: NWEndpoint, shownName: String) {
+    private func join(_ endpoint: NetEndpoint, shownName: String) {
         guard let game, joining == nil else { return }
         let name = saveName(game)
         status = "Joining \(shownName)…"
