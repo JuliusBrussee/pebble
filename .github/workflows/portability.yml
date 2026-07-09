@@ -39,13 +39,13 @@ jobs:
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
         run: |
           swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$RUNNER_TEMP/pebsmoke-deterministic.json"
-      - name: Run portable smoke (vck1)
+      - name: Run portable smoke (vck1, protocol, renderabi, codecs)
         env:
           PEBBLE_CI: "1"
           PEBBLE_DATA_DIR: ${{ runner.temp }}/pebble-data
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
         run: |
-          swift run -c release pebsmoke-portable --require-suite vck1 --report-json "$RUNNER_TEMP/pebsmoke-portable.json"
+          swift run -c release pebsmoke-portable --require-suite vck1 --require-suite protocol --require-suite renderabi --require-suite codecs --report-json "$RUNNER_TEMP/pebsmoke-portable.json"
       - name: Preserve macOS app/server/full smoke builds
         run: |
           swift build -c release --target Pebble
@@ -89,6 +89,10 @@ jobs:
           swift build -c release --target PebbleCoreBase
           swift build -c release --target CPebblePlatform
           swift build -c release --target pebsmoke_deterministic
+          swift build -c release --target PebbleRenderABI
+          swift build -c release --target PebbleCodecs
+          swift build -c release --target PebbleAudioCore
+          swift build -c release --target PebblePlatformNative
       - name: Run deterministic smoke only
         shell: pwsh
         env:
@@ -96,7 +100,12 @@ jobs:
           PEBBLE_DATA_DIR: ${{ runner.temp }}\pebble-data
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}\goldens
         run: swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$env:RUNNER_TEMP\pebsmoke-deterministic.json"
-      # pebsmoke-portable is NOT built on Windows yet: it depends on PebbleCore, which still
-      # imports Network/SQLite3 directly. Lane B (persistence/VCK1 -> PebbleStoreSQLite) and
-      # lane C (network -> PebbleNetApple) must land and PebbleCore must stop importing those
-      # frameworks before pebsmoke-portable can be added to this job.
+      # pebsmoke-portable and PebbleCore are NOT built on Windows yet. The network lane
+      # (wave 1) removed `import Network` from PebbleCore entirely, but PebbleCore still
+      # imports `simd` (Core/MathX.swift) and `SQLite3` (Game/Saves.swift) directly — both
+      # forbidden for portable targets. Those removals belong to the math-time lane
+      # (Mat4 -> Mat4f) and the persistence lane (SaveDB -> WorldStore/PebbleStoreSQLite),
+      # neither of which has landed yet. pebsmoke_portable depends on PebbleCore in
+      # Package.swift, so it inherits the same block. PebbleRenderABI/PebbleCodecs/
+      # PebbleAudioCore/PebblePlatformNative above have no PebbleCore dependency and are
+      # confirmed import-clean, so they build standalone here.

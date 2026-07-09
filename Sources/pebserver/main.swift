@@ -11,8 +11,17 @@
 
 import Foundation
 import PebbleCore
+#if os(macOS)
+import PebbleNetApple
+#endif
 
 setbuf(stdout, nil)
+
+// real LAN sockets/Bonjour instead of the portable in-memory default —
+// see NetTransportDefaults in PebbleCore/Net/NetTransport.swift
+#if os(macOS)
+AppleNetTransportFactory.installAsDefault()
+#endif
 
 // ---- tiny arg parser --------------------------------------------------------
 let rawArgs = Array(CommandLine.arguments.dropFirst())

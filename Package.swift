@@ -44,6 +44,7 @@ let package = Package(
             name: "PebbleRenderABI",
             dependencies: ["PebbleCoreBase"],
             path: "Sources/PebbleRenderABI",
+            exclude: ["README.md"],
             swiftSettings: swift5
         ),
         // portable codecs (PNG/ZIP/etc.): no ImageIO/Compression. placeholder until lane E.

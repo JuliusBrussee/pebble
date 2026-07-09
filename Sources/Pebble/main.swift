@@ -5,6 +5,7 @@
 import AppKit
 import MetalKit
 import PebbleCore
+import PebbleNetApple
 
 // ---------------------------------------------------------------------------
 // NSEvent keyCode (kVK_*) → internal key-code strings (GameCore keybinds)
@@ -665,6 +666,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MTKViewDelegate, NSWin
         cmd.commit()
     }
 }
+
+// real LAN sockets/Bonjour instead of the portable in-memory default —
+// see NetTransportDefaults in PebbleCore/Net/NetTransport.swift
+AppleNetTransportFactory.installAsDefault()
 
 let app = NSApplication.shared
 let delegate = AppDelegate()
