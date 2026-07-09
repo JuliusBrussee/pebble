@@ -67,22 +67,26 @@ Status: planning baseline after parallel repository exploration and adversarial 
 | 11 | [Resource Packs, PNG/Image Codecs, Zip/Archive Codecs, and Skins](PORTING/11-resource-packs-image-archive-codecs.md) | 04, 06, 09 |
 | 12 | [Dedicated Server Console, Signals, and Headless Runtime](PORTING/12-server-console-and-headless-runtime.md) | 02, 03, 04, 05 |
 | 13 | [Smoke Harness, Goldens, and Cross-Platform CI](PORTING/13-smoke-goldens-and-cross-platform-ci.md) | 01, 02, 04, 05, 12 |
-| 14 | [Packaging, Installers, Bundled Assets, and Distribution](PORTING/14-packaging-installers-and-bundled-assets.md) | 01, 09, 11, 12 |
+| 14 | [Packaging, Installers, Bundled Assets, and Distribution](PORTING/14-packaging-installers-and-bundled-assets.md) | 01, 04, 05, 07, 10, 11, 12, 13 |
+
+## Parallel implementation plan
+
+The coordinated implementation workflow lives in [PORTING/IMPLEMENTATION-PARALLEL.md](PORTING/IMPLEMENTATION-PARALLEL.md). It includes a second adversarial-review pass and two implementation-time review checkpoints per lane.
 
 ## First execution order
 
-1. 01 → 13 minimal CI skeleton.
-2. 02 + 03 deterministic target, math/time/executor seams.
-3. 04 data-root/SQLite isolation so tests stop touching real user data.
-4. 05 direct TCP transport and temp-root social storage.
-5. 12 portable dedicated server, direct-IP smoke.
-6. 06 render ABI freeze.
-7. 08 Metal facade/preservation.
-8. 09 SDL/window/input shell.
-9. 11 codecs/resource packs/skins.
-10. 10 audio sink.
-11. 07 Vulkan backend.
-12. 14 packaging.
+1. Gate 0 baseline freeze: macOS build/smoke, Metal screenshots, temp-root write audit, explicit goldens dir, and CI regold ban inventory.
+2. 01 + 13a deterministic-only smoke target and truthful target graph. Do **not** run full smoke yet.
+3. 04 phase-zero data-root/service injection so smoke/server/package paths cannot touch real user data.
+4. 02 + 03 deterministic target, math/time/executor seams, ordered publication, and global reset.
+5. 05 direct TCP transport and temp-root social storage.
+6. 12 portable dedicated server, direct-IP smoke.
+7. 13b full smoke/CI after 04/05/12 are green.
+8. 06A render ABI discovery/tests and 08 Metal baseline/preservation before render extraction.
+9. 09 SDL/window/input shell plus 11 codecs/resource packs/skins and 10 audio sink.
+10. 07 Vulkan backend after render/window/resource prerequisites.
+11. 13c render smoke after 06–09 and backend baselines.
+12. 14 packaging after data roots, network/server, renderer, audio, resources, native dependency closure, and package smoke are green.
 
 ## Global verification gates
 
