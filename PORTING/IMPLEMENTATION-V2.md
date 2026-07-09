@@ -117,11 +117,24 @@ Worktrees fork from HEAD at workflow launch. Two fixes, use both:
    Worktrees share the object database, so the commit is always reachable. Never a hard stop — a lane
    that halts on a stale base wastes its whole slot, as four did.
 
-### Build cache
+### Build cache — measured, and rejected
 
-Worktrees start cold. Before the first build, clone the main tree's `.build` with `cp -c -R`
-(APFS reflink, near-free). Verify once that SwiftPM tolerates the path change; if it does not, fall
-back to cold builds of the lane's own target only, which is cheap anyway under P4.
+Worktrees start cold. The obvious optimisation is to APFS-clone the main tree's `.build` into each
+worktree with `cp -c -R`. **Do not.** Measured on this repo:
+
+| | wall clock |
+|---|---|
+| cold worktree, full debug build | 68.5 s |
+| worktree seeded with a cloned `.build` | 75.3 s |
+
+The clone copies 848 MB, and SwiftPM then recompiles 155 of 156 tasks anyway — Swift module records and
+the C target's PCH pin absolute paths (`error: PCH was compiled with module cache path '…/pebble/.build/…'
+but the path is currently '…/worktree/.build/…'`). Clearing `ModuleCache` fixes the hard error but not
+the invalidation. The clone is strictly slower than starting cold.
+
+A full cold debug build of the whole graph is only ~70 s, so this does not matter. Under P4 a leaf lane
+builds one target, which is faster still. The saving was never in the cache; it was in not building
+things you cannot break.
 
 ### Merge
 

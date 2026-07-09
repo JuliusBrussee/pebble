@@ -64,8 +64,9 @@ FIRST, unconditionally:
 If BASE_OK does not print, say so in \`blocked\` and stop. Otherwise continue — do NOT stop merely
 because \`git log -1\` does not name the API commit.
 
-Then, to start warm instead of cold:
-    cp -c -R ${REPO}/.build .build 2>/dev/null || true    # APFS reflink; harmless if SwiftPM rejects it
+Do NOT try to seed \`.build\` from the main tree. It was measured: cloning is 75.3s vs 68.5s cold,
+because Swift module records and the C PCH pin absolute paths and everything recompiles anyway.
+Just build. A cold debug build of the whole graph is ~70s; your own target is far less.
 
 Commit exactly ONE squashed commit (\`git add -A && git commit -m "<lane>: <summary>"\`) and return its sha.
 A smaller correct commit beats a larger broken one. Never commit code that does not build.
