@@ -299,7 +299,7 @@ public final class NetHostSession {
         g.name = final
         g.pid = String(pid.prefix(64))
         g.skin = skin.count <= 1 << 18 ? skin : Data()
-        SocialStore.shared.recordRecent(id: g.pid, name: final, how: "joined you")
+        game.socialStore.recordRecent(id: g.pid, name: final, how: "joined you")
 
         // returning guest? restore their saved spot + inventory (id key first,
         // then the legacy name key from pre-identity versions)
@@ -728,7 +728,7 @@ public final class NetGuestSession {
             joined = true
             status = "joined"
             if !wel.hostId.isEmpty {
-                SocialStore.shared.recordRecent(id: wel.hostId, name: wel.hostName, how: "you joined")
+                game.socialStore.recordRecent(id: wel.hostId, name: wel.hostName, how: "you joined")
             }
             game.enterWorldAsGuest(self, wel)
             for (eidStr, name) in wel.players {
@@ -785,7 +785,7 @@ public final class NetGuestSession {
         case let .playerJoin(eid, name, pid, _):
             addPlayerShadow(Int(eid), name)
             if !pid.isEmpty {
-                SocialStore.shared.recordRecent(id: pid, name: name, how: "played together")
+                game.socialStore.recordRecent(id: pid, name: name, how: "played together")
             }
             game.host?.pushChat("§e\(name) joined the game")
 

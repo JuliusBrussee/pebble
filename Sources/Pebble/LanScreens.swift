@@ -125,7 +125,7 @@ final class MultiplayerScreen: Screen {
                     self.statusColor = "#ffff55"
                     return
                 }
-                SocialStore.shared.addFriend(id: decoded.pid, name: decoded.name)
+                game.socialStore.addFriend(id: decoded.pid, name: decoded.name)
                 self.codeField.text = ""
                 self.codeField.caret = 0
                 self.status = "\(decoded.name) added! Now send them YOUR code too."
@@ -135,7 +135,7 @@ final class MultiplayerScreen: Screen {
             buttons.append(addB)
             y += 52
 
-            let friends = SocialStore.shared.friends
+            let friends = game.socialStore.friends
             if friends.isEmpty {
                 status = "No friends yet — swap friend codes, or play together once!"
                 statusColor = "#a0a0a0"
@@ -152,21 +152,21 @@ final class MultiplayerScreen: Screen {
                 buttons.append(joinB)
                 let removeB = Button(cx + 74, y, 20, 20, "§c✕", { [weak self, weak ui, weak game] in
                     guard let self, let ui, let game else { return }
-                    SocialStore.shared.removeFriend(id: fr.id)
+                    game.socialStore.removeFriend(id: fr.id)
                     self.rebuild(ui, game)
                 })
                 buttons.append(removeB)
                 y += 24
             }
             // recent players → add as friend
-            let candidates = SocialStore.shared.recents.filter { !SocialStore.shared.isFriend($0.id) }
+            let candidates = game.socialStore.recents.filter { !game.socialStore.isFriend($0.id) }
             if !candidates.isEmpty {
                 y += 14
                 for rp in candidates.prefix(2) {
                     let b = Button(cx - 100, y, 200, 20, "§e+ Add friend:§r \(rp.name) (\(rp.how))", {
                         [weak self, weak ui, weak game] in
                         guard let self, let ui, let game else { return }
-                        SocialStore.shared.addFriend(id: rp.id, name: rp.name)
+                        game.socialStore.addFriend(id: rp.id, name: rp.name)
                         self.status = "\(rp.name) added!"
                         self.statusColor = "#a0ffa0"
                         self.rebuild(ui, game)
@@ -177,7 +177,7 @@ final class MultiplayerScreen: Screen {
             }
 
         case "servers":
-            let servers = SocialStore.shared.servers
+            let servers = game.socialStore.servers
             if servers.isEmpty && status.isEmpty {
                 status = "Save a server address below (ask the server owner for it)."
                 statusColor = "#a0a0a0"
@@ -190,7 +190,7 @@ final class MultiplayerScreen: Screen {
                 buttons.append(joinB)
                 let removeB = Button(cx + 74, y, 20, 20, "§c✕", { [weak self, weak ui, weak game] in
                     guard let self, let ui, let game else { return }
-                    SocialStore.shared.removeServer(host: s.host, port: s.port)
+                    game.socialStore.removeServer(host: s.host, port: s.port)
                     self.rebuild(ui, game)
                 })
                 buttons.append(removeB)
@@ -206,7 +206,7 @@ final class MultiplayerScreen: Screen {
             let addB = Button(cx - 100, y + 68, 98, 20, "Save Server", { [weak self, weak ui, weak game] in
                 guard let self, let ui, let game else { return }
                 if let entry = self.parseAddress() {
-                    SocialStore.shared.addServer(entry)
+                    game.socialStore.addServer(entry)
                     self.status = "Saved \(entry.name)."
                     self.statusColor = "#a0ffa0"
                     self.addressField.text = ""

@@ -43,24 +43,6 @@ public struct RecentPlayer: Codable, Equatable {
     }
 }
 
-private func socialURL(_ file: String) -> URL {
-    vcSupportDir().appendingPathComponent(file)
-}
-
-private func loadJSON<T: Codable>(_ file: String, _ fallback: T) -> T {
-    guard let data = try? Data(contentsOf: socialURL(file)),
-          let v = try? JSONDecoder().decode(T.self, from: data) else { return fallback }
-    return v
-}
-
-private func saveJSON<T: Codable>(_ file: String, _ v: T) {
-    let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-    if let data = try? enc.encode(v) {
-        try? data.write(to: socialURL(file), options: .atomic)
-    }
-}
-
 /// Friend codes — your permanent identity packed into a short, shareable
 /// string ("PEB1…"). No accounts, no cloud: swapping codes over any chat app
 /// IS the friend request + accept. Encodes the 16 UUID bytes + display name.
@@ -93,18 +75,38 @@ public enum FriendCode {
     }
 }
 
-/// one shared store, loaded lazily, saved on every mutation (tiny files)
+/// Root-aware store. GameCore, smoke, server, and NetSession use injected instances.
 public final class SocialStore {
-    public static let shared = SocialStore()
-
     public private(set) var friends: [FriendEntry]
     public private(set) var servers: [ServerEntry]
     public private(set) var recents: [RecentPlayer]
 
-    private init() {
+    private let paths: PebbleDataPaths
+    private let clock: () -> Double
+
+    public init(paths: PebbleDataPaths, clock: @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }) {
+        self.paths = paths
+        self.clock = clock
+        friends = []
+        servers = []
+        recents = []
         friends = loadJSON("friends.json", [])
         servers = loadJSON("servers.json", [])
         recents = loadJSON("recents.json", [])
+    }
+
+    private func loadJSON<T: Codable>(_ file: String, _ fallback: T) -> T {
+        guard let data = try? Data(contentsOf: paths.socialJSON(file)),
+              let v = try? JSONDecoder().decode(T.self, from: data) else { return fallback }
+        return v
+    }
+
+    private func saveJSON<T: Codable>(_ file: String, _ v: T) {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? enc.encode(v) {
+            try? data.write(to: paths.socialJSON(file), options: .atomic)
+        }
     }
 
     // ---- friends ----
@@ -115,9 +117,9 @@ public final class SocialStore {
         guard !id.isEmpty else { return }
         if let i = friends.firstIndex(where: { $0.id == id }) {
             friends[i].name = name
-            friends[i].lastSeen = Date().timeIntervalSince1970 * 1000
+            friends[i].lastSeen = clock()
         } else {
-            friends.append(FriendEntry(id: id, name: name))
+            friends.append(FriendEntry(id: id, name: name, lastSeen: clock()))
         }
         saveJSON("friends.json", friends)
     }
@@ -129,7 +131,7 @@ public final class SocialStore {
     public func touchFriend(id: String, name: String) {
         guard let i = friends.firstIndex(where: { $0.id == id }) else { return }
         friends[i].name = name
-        friends[i].lastSeen = Date().timeIntervalSince1970 * 1000
+        friends[i].lastSeen = clock()
         saveJSON("friends.json", friends)
     }
 
@@ -155,7 +157,7 @@ public final class SocialStore {
     public func recordRecent(id: String, name: String, how: String) {
         guard !id.isEmpty else { return }
         recents.removeAll { $0.id == id }
-        recents.insert(RecentPlayer(id: id, name: name, how: how), at: 0)
+        recents.insert(RecentPlayer(id: id, name: name, how: how, lastSeen: clock()), at: 0)
         if recents.count > 20 { recents.removeLast(recents.count - 20) }
         saveJSON("recents.json", recents)
         touchFriend(id: id, name: name)

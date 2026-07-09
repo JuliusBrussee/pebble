@@ -1,4 +1,4 @@
-// Settings — JSON files under ~/Library/Application Support/Pebble/.
+// Settings — JSON files under the Pebble data root.
 // Field names, defaults, and render-distance clamps are frozen; keybinds
 // keep internal key-code strings so the app's NSEvent translation layer
 // and saved configs stay engine-compatible.
@@ -73,53 +73,63 @@ public let DEFAULT_KEYBINDS: [String: String] = [
 
 public func defaultSettings() -> Settings { Settings() }
 
-/// ~/Library/Application Support/Pebble — created on first touch
+/// The legacy macOS support directory helper remains for AppKit-only code until
+/// resource packs/skins are injected through EngineServices in Lane E.
 public func vcSupportDir() -> URL {
-    let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-    let dir = base.appendingPathComponent("Pebble", isDirectory: true)
-    try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    return dir
+    PebbleDataPaths.platformDefault().root
 }
 
-private var settingsURL: URL { vcSupportDir().appendingPathComponent("settings.json") }
-private var keybindsURL: URL { vcSupportDir().appendingPathComponent("keybinds.json") }
+public final class SettingsStore {
+    public let paths: PebbleDataPaths
 
-public func loadSettings() -> Settings {
-    var s = Settings()
-    if let data = try? Data(contentsOf: settingsURL),
-       let saved = try? JSONDecoder().decode(Settings.self, from: data) {
-        s = saved
-        // merge any volume categories added since the file was written
-        for (k, v) in Settings().volumes where s.volumes[k] == nil { s.volumes[k] = v }
+    public init(paths: PebbleDataPaths) {
+        self.paths = paths
     }
-    // hard ceiling: above 16 the full-height chunk arrays + mesh pipeline
-    // dominate memory; floor of 4 keeps the world visible
-    s.renderDistance = min(16, max(4, s.renderDistance))
-    if let g = s.gameSpeed { s.gameSpeed = min(3, max(0.5, g)) }
-    return s
-}
 
-public func saveSettings(_ s: Settings) {
-    let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-    if let data = try? enc.encode(s) {
-        try? data.write(to: settingsURL, options: .atomic)
+    public func loadSettings() -> Settings {
+        var s = Settings()
+        if let data = try? Data(contentsOf: paths.settingsJSON),
+           let saved = try? JSONDecoder().decode(Settings.self, from: data) {
+            s = saved
+            // merge any volume categories added since the file was written
+            for (k, v) in Settings().volumes where s.volumes[k] == nil { s.volumes[k] = v }
+        }
+        // hard ceiling: above 16 the full-height chunk arrays + mesh pipeline
+        // dominate memory; floor of 4 keeps the world visible
+        s.renderDistance = min(16, max(4, s.renderDistance))
+        if let g = s.gameSpeed { s.gameSpeed = min(3, max(0.5, g)) }
+        return s
+    }
+
+    public func saveSettings(_ s: Settings) {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? enc.encode(s) {
+            try? data.write(to: paths.settingsJSON, options: .atomic)
+        }
+    }
+
+    public func loadKeybinds() -> [String: String] {
+        var binds = DEFAULT_KEYBINDS
+        if let data = try? Data(contentsOf: paths.keybindsJSON),
+           let saved = try? JSONDecoder().decode([String: String].self, from: data) {
+            for (k, v) in saved { binds[k] = v }
+        }
+        return binds
+    }
+
+    public func saveKeybinds(_ binds: [String: String]) {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? enc.encode(binds) {
+            try? data.write(to: paths.keybindsJSON, options: .atomic)
+        }
     }
 }
 
-public func loadKeybinds() -> [String: String] {
-    var binds = DEFAULT_KEYBINDS
-    if let data = try? Data(contentsOf: keybindsURL),
-       let saved = try? JSONDecoder().decode([String: String].self, from: data) {
-        for (k, v) in saved { binds[k] = v }
-    }
-    return binds
-}
-
-public func saveKeybinds(_ binds: [String: String]) {
-    let enc = JSONEncoder()
-    enc.outputFormatting = [.prettyPrinted, .sortedKeys]
-    if let data = try? enc.encode(binds) {
-        try? data.write(to: keybindsURL, options: .atomic)
-    }
-}
+// Legacy convenience wrappers for the macOS default app path. CI without an
+// explicit PEBBLE_DATA_DIR fails inside PebbleDataPaths.platformDefault().
+public func loadSettings() -> Settings { SettingsStore(paths: .platformDefault()).loadSettings() }
+public func saveSettings(_ s: Settings) { SettingsStore(paths: .platformDefault()).saveSettings(s) }
+public func loadKeybinds() -> [String: String] { SettingsStore(paths: .platformDefault()).loadKeybinds() }
+public func saveKeybinds(_ binds: [String: String]) { SettingsStore(paths: .platformDefault()).saveKeybinds(binds) }

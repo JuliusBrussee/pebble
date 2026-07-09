@@ -54,13 +54,14 @@ public struct WorldRecord: Codable {
     public var gatewaysSpawned: Int
     public var nextEntityId: Int
 
-    public init(id: String, name: String, seed: Int32, gameMode: Int, difficulty: Int) {
+    public init(id: String, name: String, seed: Int32, gameMode: Int, difficulty: Int,
+                lastPlayed: Double = Date().timeIntervalSince1970 * 1000) {
         self.id = id
         self.name = name
         self.seed = seed
         self.gameMode = gameMode
         self.difficulty = difficulty
-        lastPlayed = Date().timeIntervalSince1970 * 1000
+        self.lastPlayed = lastPlayed
         version = "pebble-\(PEBBLE_VERSION)"
         dims = ["0": DimState(), "1": DimState(), "2": DimState()]
         spawnX = 0
@@ -113,9 +114,11 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 
 public final class SaveDB {
     private var db: OpaquePointer?
+    private let paths: PebbleDataPaths
 
-    public init() {
-        let url = vcSupportDir().appendingPathComponent("pebble.db")
+    public init(paths: PebbleDataPaths) {
+        self.paths = paths
+        let url = paths.database
         let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         guard sqlite3_open_v2(url.path, &db, flags, nil) == SQLITE_OK else {
             fatalError("pebble.db could not be opened: \(String(cString: sqlite3_errmsg(db)))")
@@ -396,7 +399,7 @@ public final class SaveDB {
     /// saves/chunks/<id>/*.vck, …); the old folder is renamed, never deleted
     private func migrateLegacySaves() {
         let fm = FileManager.default
-        let legacy = vcSupportDir().appendingPathComponent("saves", isDirectory: true)
+        let legacy = paths.legacySavesDir
         let worldsDir = legacy.appendingPathComponent("worlds")
         guard fm.fileExists(atPath: worldsDir.path),
               let files = try? fm.contentsOfDirectory(at: worldsDir, includingPropertiesForKeys: nil),
@@ -437,7 +440,7 @@ public final class SaveDB {
             }
             exec("COMMIT")
         }
-        let backup = vcSupportDir().appendingPathComponent("saves-legacy-backup")
+        let backup = paths.legacyBackupDir
         try? fm.moveItem(at: legacy, to: backup)
         print("[saves] migrated \(worlds) worlds, \(chunks) chunks into pebble.db (old files kept in saves-legacy-backup)")
         fflush(stdout)

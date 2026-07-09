@@ -395,7 +395,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MTKViewDelegate, NSWin
     func applicationDidFinishLaunching(_ notification: Notification) {
         gAppDelegate = self
         let t0 = CFAbsoluteTimeGetCurrent()
-        game = GameCore()
+        game = GameCore(services: .platformDefault())
         game.host = host
         host.app = self
         print(String(format: "registries: %.0fms (%d blocks, %d items, %d biomes)",

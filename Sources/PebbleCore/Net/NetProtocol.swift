@@ -45,7 +45,7 @@ public struct PacketReader {
         off = at
     }
 
-    public enum Err: Error { case underflow, badString, badType(UInt8) }
+    public enum Err: Error { case underflow, badString, badType(UInt8), trailingBytes(Int) }
 
     private mutating func take(_ n: Int) throws -> Data {
         guard off + n <= data.count else { throw Err.underflow }
@@ -338,57 +338,60 @@ public enum NetMsg {
     public static func decode(_ data: Data) throws -> NetMsg {
         var r = PacketReader(data)
         let type = try r.u8()
+        let msg: NetMsg
         switch type {
-        case 1: return .hello(name: try r.str(), pid: try r.str(), version: try r.str(),
-                              proto: try r.u16(), skin: try r.blob())
-        case 2: return .chunkReq(dim: try r.u8(), cx: try r.i32(), cz: try r.i32())
-        case 3: return .playerState(try NetPlayerState.read(&r))
-        case 4: return .blockBreak(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), held: try r.blob())
-        case 5: return .useBlock(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(),
-                                 face: try r.u8(), px: try r.f32(), py: try r.f32(), pz: try r.f32(),
-                                 sneaking: try r.bool(), held: try r.blob())
-        case 6: return .useItem(held: try r.blob())
-        case 7: return .stopUsing(useTicks: try r.i32(), held: try r.blob())
-        case 8: return .useEntity(eid: try r.i32())
-        case 9: return .attack(eid: try r.i32(), held: try r.blob())
-        case 10: return .dropItem(stack: try r.blob())
-        case 11: return .chat(text: try r.str())
-        case 12: return .playerSave(json: try r.blob())
-        case 13: return .goodbye
-        case 30: return .welcome(json: try r.blob())
-        case 31: return .chunkData(dim: try r.u8(), cx: try r.i32(), cz: try r.i32(), record: try r.blob())
-        case 32: return .setBlock(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), cell: try r.i32())
-        case 33: return .entitySpawn(eid: try r.i32(), dim: try r.u8(), json: try r.blob())
+        case 1: msg = .hello(name: try r.str(), pid: try r.str(), version: try r.str(),
+                             proto: try r.u16(), skin: try r.blob())
+        case 2: msg = .chunkReq(dim: try r.u8(), cx: try r.i32(), cz: try r.i32())
+        case 3: msg = .playerState(try NetPlayerState.read(&r))
+        case 4: msg = .blockBreak(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), held: try r.blob())
+        case 5: msg = .useBlock(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(),
+                                face: try r.u8(), px: try r.f32(), py: try r.f32(), pz: try r.f32(),
+                                sneaking: try r.bool(), held: try r.blob())
+        case 6: msg = .useItem(held: try r.blob())
+        case 7: msg = .stopUsing(useTicks: try r.i32(), held: try r.blob())
+        case 8: msg = .useEntity(eid: try r.i32())
+        case 9: msg = .attack(eid: try r.i32(), held: try r.blob())
+        case 10: msg = .dropItem(stack: try r.blob())
+        case 11: msg = .chat(text: try r.str())
+        case 12: msg = .playerSave(json: try r.blob())
+        case 13: msg = .goodbye
+        case 30: msg = .welcome(json: try r.blob())
+        case 31: msg = .chunkData(dim: try r.u8(), cx: try r.i32(), cz: try r.i32(), record: try r.blob())
+        case 32: msg = .setBlock(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), cell: try r.i32())
+        case 33: msg = .entitySpawn(eid: try r.i32(), dim: try r.u8(), json: try r.blob())
         case 34:
             let dim = try r.u8()
             let n = Int(try r.u16())
             var states: [NetEntityState] = []
             states.reserveCapacity(n)
             for _ in 0..<n { states.append(try NetEntityState.read(&r)) }
-            return .entityBatch(dim: dim, states: states)
+            msg = .entityBatch(dim: dim, states: states)
         case 35:
             let n = Int(try r.u16())
             var eids: [Int32] = []
             eids.reserveCapacity(n)
             for _ in 0..<n { eids.append(try r.i32()) }
-            return .entityRemove(eids: eids)
-        case 36: return .entityEvent(eid: try r.i32(), kind: try r.u8())
-        case 37: return .playerJoin(eid: try r.i32(), name: try r.str(), pid: try r.str(), skin: try r.blob())
-        case 38: return .playerLeave(eid: try r.i32(), name: try r.str())
-        case 39: return .playerStateS(eid: try r.i32(), state: try NetPlayerState.read(&r))
-        case 40: return .giveItem(stack: try r.blob())
-        case 41: return .giveXP(amount: try r.i32())
-        case 42: return .damage(amount: try r.f32(), source: try r.str())
-        case 43: return .timeSync(json: try r.blob())
-        case 44: return .sound(name: try r.str(), dim: try r.u8(), x: try r.f32(), y: try r.f32(),
-                               z: try r.f32(), vol: try r.f32(), pitch: try r.f32())
-        case 45: return .particles(kind: try r.str(), dim: try r.u8(), x: try r.f32(), y: try r.f32(),
-                                   z: try r.f32(), count: try r.i32(), spread: try r.f32(), cell: try r.i32())
-        case 46: return .chatS(text: try r.str())
-        case 47: return .beSync(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), json: try r.blob())
-        case 48: return .disconnect(reason: try r.str())
+            msg = .entityRemove(eids: eids)
+        case 36: msg = .entityEvent(eid: try r.i32(), kind: try r.u8())
+        case 37: msg = .playerJoin(eid: try r.i32(), name: try r.str(), pid: try r.str(), skin: try r.blob())
+        case 38: msg = .playerLeave(eid: try r.i32(), name: try r.str())
+        case 39: msg = .playerStateS(eid: try r.i32(), state: try NetPlayerState.read(&r))
+        case 40: msg = .giveItem(stack: try r.blob())
+        case 41: msg = .giveXP(amount: try r.i32())
+        case 42: msg = .damage(amount: try r.f32(), source: try r.str())
+        case 43: msg = .timeSync(json: try r.blob())
+        case 44: msg = .sound(name: try r.str(), dim: try r.u8(), x: try r.f32(), y: try r.f32(),
+                              z: try r.f32(), vol: try r.f32(), pitch: try r.f32())
+        case 45: msg = .particles(kind: try r.str(), dim: try r.u8(), x: try r.f32(), y: try r.f32(),
+                                  z: try r.f32(), count: try r.i32(), spread: try r.f32(), cell: try r.i32())
+        case 46: msg = .chatS(text: try r.str())
+        case 47: msg = .beSync(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), json: try r.blob())
+        case 48: msg = .disconnect(reason: try r.str())
         default: throw PacketReader.Err.badType(type)
         }
+        guard r.off == data.count else { throw PacketReader.Err.trailingBytes(data.count - r.off) }
+        return msg
     }
 }
 

@@ -203,7 +203,10 @@ final class MeshJobState {
 // =============================================================================
 public final class GameCore {
     public weak var host: GameHost?
-    public let db = SaveDB()
+    public let services: EngineServices
+    public let settingsStore: SettingsStore
+    public let socialStore: SocialStore
+    public let db: SaveDB
     public var settings: Settings
     public var keybinds: [String: String]
 
@@ -285,13 +288,17 @@ public final class GameCore {
     private var heldForChunks = false
     public private(set) var musicMood = "menu"
 
-    public init() {
-        settings = loadSettings()
-        keybinds = loadKeybinds()
+    public init(services: EngineServices) {
+        self.services = services
+        self.settingsStore = services.settingsStore
+        self.socialStore = services.socialStore
+        self.db = services.db
+        settings = settingsStore.loadSettings()
+        keybinds = settingsStore.loadKeybinds()
         // permanent player identity (XUID-style): minted once, never changes
         if settings.playerId == nil {
-            settings.playerId = UUID().uuidString
-            saveSettings(settings)
+            settings.playerId = services.makeUUIDString()
+            settingsStore.saveSettings(settings)
         }
         // registry boot, in frozen order
         registerAllBlocks()
@@ -353,8 +360,8 @@ public final class GameCore {
     }
 
     public func applySettings() {
-        saveSettings(settings)
-        saveKeybinds(keybinds)
+        settingsStore.saveSettings(settings)
+        settingsStore.saveKeybinds(keybinds)
     }
 
     public func respawnPlayer() {
@@ -441,7 +448,7 @@ public final class GameCore {
         let trimmed = seedText.trimmingCharacters(in: .whitespaces)
         var seed: Int32
         if trimmed.isEmpty {
-            seed = Int32.random(in: 0..<0x7fffffff)
+            seed = Int32(services.randomInt(0x7fffffff))
         } else if trimmed.range(of: "^-?\\d+$", options: .regularExpression) != nil {
             seed = wrapToInt32(Double(trimmed) ?? 0)
         } else {
@@ -451,9 +458,11 @@ public final class GameCore {
                 seed = seed &* 31 &+ Int32(unit)
             }
         }
-        let ms = Int(Date().timeIntervalSince1970 * 1000)
-        let id = "w" + String(ms, radix: 36) + String(Int.random(in: 0..<1_000_000), radix: 36)
-        var rec = WorldRecord(id: id, name: name, seed: seed, gameMode: mode, difficulty: difficulty)
+        let now = services.nowMillis()
+        let ms = Int(now)
+        let id = "w" + String(ms, radix: 36) + String(services.randomInt(1_000_000), radix: 36)
+        var rec = WorldRecord(id: id, name: name, seed: seed, gameMode: mode, difficulty: difficulty,
+                              lastPlayed: now)
         // pick a spawn: walk outward for a land biome
         let gen = overworldGen(UInt32(bitPattern: seed))
         var sx = 8, sz = 8
@@ -597,7 +606,7 @@ public final class GameCore {
             return
         }
         guard inWorld, var rec = worldRec else { return }
-        rec.lastPlayed = Date().timeIntervalSince1970 * 1000
+        rec.lastPlayed = services.nowMillis()
         if let p = player { rec.gameMode = p.gameMode }   // dedicated has none
         rec.nextEntityId = peekNextEntityId()
         for (d, w) in worlds {
@@ -1211,7 +1220,7 @@ public final class GameCore {
     /// flip mesh mode at runtime and rebuild every visible section
     public func setMeshMode(simple: Bool) {
         settings.simpleMesh = simple
-        saveSettings(settings)
+        settingsStore.saveSettings(settings)
         remeshAll()
     }
 

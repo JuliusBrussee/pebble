@@ -1,0 +1,86 @@
+name: Portability selected targets
+
+on:
+  push:
+    branches: [main, port/**]
+  pull_request:
+
+jobs:
+  macos-selected:
+    name: macOS selected targets and Metal build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject regold in CI
+        shell: bash
+        run: |
+          if [ "${PEBBLE_REGOLD+x}" = "x" ]; then
+            echo "PEBBLE_REGOLD is forbidden in CI" >&2
+            exit 2
+          fi
+      - name: Toolchain
+        run: swift --version
+      - name: Package graph
+        run: swift package describe --type json > "$RUNNER_TEMP/package.json"
+      - name: Build selected portable targets
+        run: |
+          swift build -c release --target PebbleCoreBase
+          swift build -c release --target CPebblePlatform
+          swift build -c release --target pebsmoke_deterministic
+      - name: Run deterministic smoke
+        env:
+          PEBBLE_CI: "1"
+          PEBBLE_DATA_DIR: ${{ runner.temp }}/pebble-data
+          PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
+        run: |
+          swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$RUNNER_TEMP/pebsmoke-deterministic.json"
+      - name: Preserve macOS app/server/full smoke builds
+        run: |
+          swift build -c release --target Pebble
+          swift build -c release --target pebserver
+          swift build -c release --target pebsmoke
+      - name: Goldens unchanged
+        run: git diff --exit-code -- goldens/
+      - name: Portable import hygiene
+        shell: bash
+        run: |
+          if git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|SQLite3|Darwin|simd)|CFAbsoluteTimeGetCurrent|Application Support' -- Sources/PebbleCoreBase Sources/pebsmoke_deterministic Sources/CPebblePlatform; then
+            echo "portable target hygiene failed" >&2
+            exit 1
+          fi
+
+  windows-selected:
+    name: Windows selected portable targets only
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Reject regold in CI
+        shell: pwsh
+        run: |
+          if (Test-Path Env:PEBBLE_REGOLD) {
+            Write-Error "PEBBLE_REGOLD is forbidden in CI"
+            exit 2
+          }
+      - name: Toolchain
+        shell: pwsh
+        run: swift --version
+      - name: Package graph
+        shell: pwsh
+        run: swift package describe --type json > "$env:RUNNER_TEMP\package.json"
+      - name: Build selected portable targets only
+        shell: pwsh
+        run: |
+          swift build -c release --target PebbleCoreBase
+          swift build -c release --target CPebblePlatform
+          swift build -c release --target pebsmoke_deterministic
+      - name: Run deterministic smoke only
+        shell: pwsh
+        env:
+          PEBBLE_CI: "1"
+          PEBBLE_DATA_DIR: ${{ runner.temp }}\pebble-data
+          PEBBLE_GOLDENS_DIR: ${{ github.workspace }}\goldens
+        run: swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$env:RUNNER_TEMP\pebsmoke-deterministic.json"

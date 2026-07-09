@@ -6,6 +6,88 @@ import Foundation
 import simd
 import PebbleCore
 
+let smokeEnv = ProcessInfo.processInfo.environment
+let smokeInCI = smokeEnv["PEBBLE_CI"] == "1" || smokeEnv["CI"] != nil || smokeEnv["GITHUB_ACTIONS"] != nil
+if smokeInCI && smokeEnv["PEBBLE_REGOLD"] != nil {
+    FileHandle.standardError.write(Data("error: PEBBLE_REGOLD is forbidden in CI\n".utf8))
+    exit(2)
+}
+
+var smokeDataRootArg: String?
+var smokeGoldensDirArg: String?
+var smokeArgs = Array(CommandLine.arguments.dropFirst())
+var smokeArgIndex = 0
+while smokeArgIndex < smokeArgs.count {
+    let arg = smokeArgs[smokeArgIndex]
+    switch arg {
+    case "--":
+        break
+    case "--data-root":
+        guard smokeArgIndex + 1 < smokeArgs.count else {
+            FileHandle.standardError.write(Data("error: --data-root requires a path\n".utf8))
+            exit(2)
+        }
+        smokeDataRootArg = smokeArgs[smokeArgIndex + 1]
+        smokeArgIndex += 1
+    case "--goldens-dir":
+        guard smokeArgIndex + 1 < smokeArgs.count else {
+            FileHandle.standardError.write(Data("error: --goldens-dir requires a path\n".utf8))
+            exit(2)
+        }
+        smokeGoldensDirArg = smokeArgs[smokeArgIndex + 1]
+        smokeArgIndex += 1
+    case "--help", "-h":
+        print("""
+        pebsmoke — full PebbleCore smoke suite
+
+          --data-root <path>    required in CI; defaults to a temp directory locally
+          --goldens-dir <path>  required in CI; defaults to repo-relative goldens locally
+        """)
+        exit(0)
+    default:
+        FileHandle.standardError.write(Data("error: unknown argument \(arg)\n".utf8))
+        exit(2)
+    }
+    smokeArgIndex += 1
+}
+
+let smokeDataRoot: URL
+if let smokeDataRootArg {
+    let trimmed = smokeDataRootArg.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        FileHandle.standardError.write(Data("error: --data-root must not be empty\n".utf8))
+        exit(2)
+    }
+    smokeDataRoot = URL(fileURLWithPath: trimmed)
+} else if let raw = smokeEnv["PEBBLE_DATA_DIR"], !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+    smokeDataRoot = URL(fileURLWithPath: raw)
+} else if smokeInCI {
+    FileHandle.standardError.write(Data("error: PEBBLE_DATA_DIR or --data-root is required in CI\n".utf8))
+    exit(2)
+} else {
+    smokeDataRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("pebble-smoke-\(UUID().uuidString)", isDirectory: true)
+}
+
+let smokeGoldensDir = smokeGoldensDirArg ?? smokeEnv["PEBBLE_GOLDENS_DIR"]
+if smokeInCI && (smokeGoldensDir?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true) {
+    FileHandle.standardError.write(Data("error: PEBBLE_GOLDENS_DIR or --goldens-dir is required in CI\n".utf8))
+    exit(2)
+}
+
+let smokePaths: PebbleDataPaths
+do {
+    smokePaths = try PebbleDataPaths(root: smokeDataRoot)
+} catch {
+    FileHandle.standardError.write(Data("error: could not create smoke data root: \(error)\n".utf8))
+    exit(2)
+}
+
+func makeSmokeCore() -> GameCore {
+    GameCore(services: .live(paths: smokePaths))
+}
+let smokeSocialStore = SocialStore(paths: smokePaths)
+
 var passed = 0
 var failed = 0
 
@@ -184,7 +266,10 @@ check("biome count = enum count", BIOMES.count == Biome.allCases.count, "got \(B
 /// candidate paths for a golden file — goldens/ beside the package manifest,
 /// tolerant of being run from the repo root, its parent, or a subdirectory
 func goldenPaths(_ name: String) -> [String] {
-    ["goldens/\(name)", "../goldens/\(name)", name]
+    if let smokeGoldensDir, !smokeGoldensDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        return [URL(fileURLWithPath: smokeGoldensDir).appendingPathComponent(name).path]
+    }
+    return ["goldens/\(name)", "../goldens/\(name)", name]
 }
 
 func loadJSON(_ name: String) -> [String: Any]? {
@@ -2157,13 +2242,17 @@ do {
         truncatedOK = false
     }
     check("truncated frames rejected", truncatedOK)
+
+    var trailing = full
+    trailing.append(0xff)
+    check("trailing bytes rejected", (try? NetMsg.decode(trailing)) == nil)
 }
 
 // ---------------------------------------------------------------------------
 section("LAN multiplayer (host + guest cores over localhost TCP)")
 do {
     // a real host core with a throwaway world (deleted at the end)
-    let hostCore = GameCore()
+    let hostCore = makeSmokeCore()
     hostCore.settings.playerName = "HostTester"
     hostCore.createWorld(name: "nettest-e2e", seedText: "424242", mode: 0, difficulty: 2)
     let worldId = hostCore.worldRec?.id ?? ""
@@ -2191,7 +2280,7 @@ do {
     check("listener got a port", portReady, "port stayed 0")
 
     if portReady {
-        let g = GameCore()
+        let g = makeSmokeCore()
         guestCore = g
         _ = g.joinLan(netDial(host: "127.0.0.1", port: hostCore.netHost!.port),
                       name: "Guesty", skin: Data())
@@ -2218,10 +2307,34 @@ do {
         g.netGuest?.sendBreak(bx, by, bz)
         check("guest break lands on host", pumpUntil(200) { hostCore.world.getBlockId(bx, by, bz) == 0 })
 
-        // entity replication: a pig on the host appears as a guest shadow
-        _ = spawnMob(hostCore.world, "pig", hp.x + 2, hp.y + 2, hp.z + 2, nil)
+        // entity replication: a controlled pig on the host appears as a guest shadow.
+        // Spawn it on known ground and wait out post-spawn/fall invulnerability before
+        // using it for the guest attack assertion below.
+        let pigX = bx + 3
+        let pigZ = bz + 3
+        let pigY = hostCore.world.surfaceY(pigX, pigZ)
+        let attackPig = spawnMob(hostCore.world, "pig",
+                                  Double(pigX) + 0.5, Double(pigY), Double(pigZ) + 0.5,
+                                  nil) as? LivingEntity
+        if let attackPig {
+            attackPig.vx = 0
+            attackPig.vy = 0
+            attackPig.vz = 0
+            attackPig.fallDistance = 0
+        }
+        func distSq(_ a: Entity, _ b: Entity) -> Double {
+            let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z
+            return dx * dx + dy * dy + dz * dz
+        }
+        func attackPigShadow() -> Entity? {
+            guard let attackPig else { return nil }
+            return g.world.entities.compactMap { $0 as? Entity }
+                .filter { $0.type == "pig" }
+                .min { distSq($0, attackPig) < distSq($1, attackPig) }
+        }
         check("mob replicates to guest", pumpUntil(200) {
-            g.hasWorld() && g.world.entities.contains { ($0 as? Entity)?.type == "pig" }
+            guard g.hasWorld(), let attackPig, let shadow = attackPigShadow() else { return false }
+            return distSq(shadow, attackPig) < 4
         })
 
         // item pickup: host-side item near the puppet lands in the guest's bag.
@@ -2242,30 +2355,30 @@ do {
             g.player?.inventory.contains { $0?.id == iid("stick") } ?? false
         })
 
-        // guest attack: a shadow pig maps back to a real pig on the host.
-        // worldgen may have spawned extra pigs, so watch ALL of them, and
-        // stand next to the SHADOW (that's what a player would aim at) —
-        // the host rejects out-of-reach swings.
-        if let pigShadow = g.world.entities.first(where: { ($0 as? Entity)?.type == "pig" }) as? Entity {
-            func hostPigs() -> [LivingEntity] {
-                hostCore.worlds.values.flatMap { w in
-                    w.entities.compactMap { ($0 as? LivingEntity)?.type == "pig" ? $0 as? LivingEntity : nil }
-                }
-            }
-            let before = Dictionary(uniqueKeysWithValues: hostPigs().map { (ObjectIdentifier($0), $0.health) })
-            let converged = pumpUntil(200) {
+        // guest attack: the controlled shadow pig maps back to the exact host pig.
+        // Stand next to the SHADOW (that's what a player would aim at); the host
+        // still validates reach against the authoritative pig and respects normal
+        // invulnerability ticks.
+        if let attackPig {
+            let stable = pumpUntil(240) {
+                guard let pigShadow = attackPigShadow(), let puppet else { return false }
                 g.player.setPos(pigShadow.x + 1, pigShadow.y + 0.5, pigShadow.z)
-                guard let puppet else { return false }
-                return hostPigs().contains { puppet.distanceTo($0) < 2.5 }
+                return distSq(pigShadow, attackPig) < 4
+                    && attackPig.onGround
+                    && attackPig.invulnTicks == 0
+                    && puppet.distanceTo(attackPig) < 2.5
             }
-            let sent = g.netGuest?.sendAttack(pigShadow) ?? false
-            check("guest attack hurts host mob", pumpUntil(100) {
-                hostPigs().contains { pig in
-                    pig.dead || pig.health < (before[ObjectIdentifier(pig)] ?? pig.health) - 0.001
-                }
-            }, "sent=\(sent) converged=\(converged) pigs=\(hostPigs().count)")
+            let before = attackPig.health
+            let pigShadow = attackPigShadow()
+            let sent = stable ? (pigShadow.map { g.netGuest?.sendAttack($0) ?? false } ?? false) : false
+            let damaged = sent && pumpUntil(100) {
+                attackPig.dead || attackPig.health < before - 0.001
+            }
+            let dist = puppet.map { $0.distanceTo(attackPig) } ?? -1
+            check("guest attack hurts host mob", stable && sent && damaged,
+                  "sent=\(sent) stable=\(stable) invuln=\(attackPig.invulnTicks) dist=\(dist) before=\(before) after=\(attackPig.health)")
         } else {
-            check("guest attack hurts host mob", false, "no pig shadow on guest")
+            check("guest attack hurts host mob", false, "attack pig failed to spawn")
         }
 
         // host-authoritative damage flows to the guest (post-armor amount)
@@ -2298,7 +2411,7 @@ do {
 // ---------------------------------------------------------------------------
 section("social stores (friends / servers / recents)")
 do {
-    let s = SocialStore.shared
+    let s = smokeSocialStore
     s.addFriend(id: "test:friend1", name: "Testy")
     check("friend added", s.isFriend("test:friend1"))
     s.addFriend(id: "test:friend1", name: "Renamed")
@@ -2333,8 +2446,8 @@ do {
 // ---------------------------------------------------------------------------
 section("dedicated server (pebserver core — no host player)")
 do {
-    let recentsBefore = Set(SocialStore.shared.recents.map { $0.id })
-    let server = GameCore()
+    let recentsBefore = Set(smokeSocialStore.recents.map { $0.id })
+    let server = makeSmokeCore()
     server.createWorld(name: "nettest-smp", seedText: "777", mode: 0, difficulty: 2)
     let worldId = server.worldRec?.id ?? ""
     server.exitToTitle()
@@ -2364,7 +2477,7 @@ do {
         }
 
         check("server listener ready", pumpUntil(900) { (server.netHost?.port ?? 0) != 0 })
-        let g = GameCore()
+        let g = makeSmokeCore()
         guest = g
         _ = g.joinLan(netDial(host: "127.0.0.1", port: server.netHost?.port ?? 0),
                       name: "SMPGuest", skin: Data())
@@ -2409,8 +2522,8 @@ do {
     server.deleteWorld(worldId)
     check("smp world deleted", server.db.getWorld(worldId) == nil)
     // scrub recents the net tests recorded (they carry this machine's own pid)
-    for r in SocialStore.shared.recents where !recentsBefore.contains(r.id) {
-        SocialStore.shared.removeRecent(id: r.id)
+    for r in server.socialStore.recents where !recentsBefore.contains(r.id) {
+        server.socialStore.removeRecent(id: r.id)
     }
 }
 

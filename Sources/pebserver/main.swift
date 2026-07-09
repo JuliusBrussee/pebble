@@ -22,18 +22,72 @@ var positional: [String] = []
 var i = 0
 while i < rawArgs.count {
     let a = rawArgs[i]
+    if a == "--" {
+        i += 1
+        continue
+    }
     if a == "--creative" || a == "--help" || a == "-h" {
         switches.insert(a)
     } else if a.hasPrefix("--") {
-        if i + 1 < rawArgs.count {
-            flags[a] = rawArgs[i + 1]
-            i += 1
+        guard i + 1 < rawArgs.count else {
+            print("error: \(a) requires a value")
+            exit(2)
         }
+        flags[a] = rawArgs[i + 1]
+        i += 1
     } else {
         positional.append(a)
     }
     i += 1
 }
+
+let port = UInt16(flags["--port"] ?? "") ?? 25585
+
+func usage(_ worlds: [WorldRecord]? = nil) {
+    print("""
+    pebserver — standalone Pebble world server (Pebble \(PEBBLE_VERSION))
+
+      pebserver "<world name or id>" [--port \(port)] [--data-dir <path>]
+      pebserver --create "<name>" [--seed <seed>] [--creative] [--port \(port)] [--data-dir <path>]
+      pebserver --help
+
+    """)
+    guard let worlds else { return }
+    if worlds.isEmpty {
+        print("No worlds yet — create one with --create.")
+    } else {
+        print("Your worlds:")
+        for w in worlds.sorted(by: { $0.lastPlayed > $1.lastPlayed }) {
+            print("  • \(w.name)  (id \(w.id), seed \(w.seed))")
+        }
+    }
+}
+
+// --help must be zero-write: no GameCore, no data-dir resolution, no world list.
+if switches.contains("--help") || switches.contains("-h") {
+    usage()
+    exit(0)
+}
+
+let explicitDataRoot: URL?
+if let rawDataRoot = flags["--data-dir"] {
+    let trimmed = rawDataRoot.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        print("error: --data-dir must not be empty")
+        exit(2)
+    }
+    explicitDataRoot = URL(fileURLWithPath: trimmed)
+} else {
+    explicitDataRoot = nil
+}
+let paths: PebbleDataPaths
+do {
+    paths = try PebbleDataPaths.resolve(explicit: explicitDataRoot)
+} catch {
+    print("error: couldn't resolve data root: \(error)")
+    exit(2)
+}
+let game = GameCore(services: .live(paths: paths))
 
 func stamp() -> String {
     let f = DateFormatter()
@@ -52,33 +106,8 @@ func log(_ s: String) {
     print("[\(stamp())] \(out)")
 }
 
-let game = GameCore()
-let port = UInt16(flags["--port"] ?? "") ?? 25585
-
-func usage(_ worlds: [WorldRecord]) {
-    print("""
-    pebserver — standalone Pebble world server (Pebble \(PEBBLE_VERSION))
-
-      pebserver "<world name or id>" [--port \(port)]
-      pebserver --create "<name>" [--seed <seed>] [--creative] [--port \(port)]
-
-    """)
-    if worlds.isEmpty {
-        print("No worlds yet — create one with --create.")
-    } else {
-        print("Your worlds:")
-        for w in worlds.sorted(by: { $0.lastPlayed > $1.lastPlayed }) {
-            print("  • \(w.name)  (id \(w.id), seed \(w.seed))")
-        }
-    }
-}
-
 // ---- resolve the world ------------------------------------------------------
 var record: WorldRecord?
-if switches.contains("--help") || switches.contains("-h") {
-    usage(game.listWorlds())
-    exit(0)
-}
 if let createName = flags["--create"] {
     // create through the normal path (also seeds a spawn player slot for the
     // world's owner), then re-open it headless
@@ -115,8 +144,15 @@ do {
 }
 game.netHost?.onLog = { line in log(line) }
 
+let actualPortReadyUntil = Date().addingTimeInterval(5)
+while (game.netHost?.port ?? 0) == 0 && Date() < actualPortReadyUntil {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+}
+let actualPort = game.netHost?.port ?? port
+print("READY port=\(actualPort) world=\(rec.id)")
+
 log("Pebble server \(PEBBLE_VERSION) — serving '\(rec.name)' (seed \(rec.seed))")
-log("Listening on port \(port) — LAN players see it under 'Join LAN Game';")
+log("Listening on port \(actualPort) — LAN players see it under 'Join LAN Game';")
 log("internet players add your address in Multiplayer → Servers.")
 log("Commands: list, say <message>, save, stop")
 
