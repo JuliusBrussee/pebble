@@ -3,6 +3,20 @@
 // guest streams world deltas and replays its actions on the host through a
 // puppet Player. Chunks travel as the existing VCK1 ChunkRecord container;
 // one-shot/rich payloads (welcome, entity spawns, item stacks) ride as JSON.
+//
+// Decode policy (pinned — do not loosen without bumping NET_PROTOCOL_VERSION):
+//   - zero-length frame: NetMsg.decode(Data()) throws .underflow (no type byte).
+//   - unknown message type: throws .badType(id). Never skipped, never trapped.
+//   - short/truncated payload (a field reads past the end): throws .underflow.
+//     This includes a length-prefixed blob/string whose declared length runs
+//     past the buffer.
+//   - trailing bytes (payload longer than the message's fields consume):
+//     throws .trailingBytes(n). A message is either fully consumed or rejected.
+//   - a frame whose OUTER [u32 length] exceeds NET_MAX_FRAME is a hard
+//     disconnect at the transport layer (see FrameCodec in NetTransport.swift),
+//     never a truncation to wait out — the sender is misbehaving or corrupt.
+// None of the above ever traps (force-unwrap/index-out-of-range): a hostile or
+// truncated buffer always surfaces as a thrown NetProtocolError.
 
 import Foundation
 
@@ -10,6 +24,14 @@ public let NET_PROTOCOL_VERSION: UInt16 = 3   // 3: armor + offhand in playerSta
 public let NET_SERVICE_TYPE = "_pebble._tcp"
 /// hard cap on a single framed message (a full chunk record is ~500 KB)
 public let NET_MAX_FRAME = 8 << 20
+
+public enum NetProtocolError: Error, Equatable {
+    case underflow            // fewer bytes remain than the field needs
+    case badString             // string bytes are not valid UTF-8
+    case badType(UInt8)        // unknown message type byte
+    case trailingBytes(Int)    // n extra bytes after a fully-decoded message
+    case blobOversize(Int)     // a length-prefixed blob claims more than NET_MAX_FRAME bytes
+}
 
 // =============================================================================
 // binary reader/writer
@@ -45,16 +67,21 @@ public struct PacketReader {
         off = at
     }
 
-    public enum Err: Error { case underflow, badString, badType(UInt8), trailingBytes(Int) }
+    /// kept for source compatibility — use `NetProtocolError` directly in new code
+    public typealias Err = NetProtocolError
 
     private mutating func take(_ n: Int) throws -> Data {
-        guard off + n <= data.count else { throw Err.underflow }
-        // subdata (copy) — the source Data may be a slice of a network buffer
+        guard n >= 0, off + n <= data.count else { throw NetProtocolError.underflow }
+        // subdata (copy) — the source Data may be a slice of a network buffer,
+        // possibly with a non-zero startIndex, so every offset is relative to it
         let out = data.subdata(in: (data.startIndex + off)..<(data.startIndex + off + n))
         off += n
         return out
     }
-    public mutating func u8() throws -> UInt8 { try take(1)[0] }
+    public mutating func u8() throws -> UInt8 {
+        let b = try take(1)
+        return b[b.startIndex]
+    }
     public mutating func bool() throws -> Bool { try u8() != 0 }
     public mutating func u16() throws -> UInt16 { UInt16(littleEndian: try take(2).withUnsafeBytes { $0.loadUnaligned(as: UInt16.self) }) }
     public mutating func i32() throws -> Int32 { Int32(littleEndian: try take(4).withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }) }
@@ -64,12 +91,12 @@ public struct PacketReader {
     public mutating func f64() throws -> Double { Double(bitPattern: UInt64(littleEndian: try take(8).withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) })) }
     public mutating func str() throws -> String {
         let n = Int(try u16())
-        guard let s = String(data: try take(n), encoding: .utf8) else { throw Err.badString }
+        guard let s = String(data: try take(n), encoding: .utf8) else { throw NetProtocolError.badString }
         return s
     }
     public mutating func blob() throws -> Data {
         let n = Int(try u32())
-        guard n <= NET_MAX_FRAME else { throw Err.underflow }
+        guard n <= NET_MAX_FRAME else { throw NetProtocolError.blobOversize(n) }
         return try take(n)
     }
 }
@@ -388,9 +415,9 @@ public enum NetMsg {
         case 46: msg = .chatS(text: try r.str())
         case 47: msg = .beSync(dim: try r.u8(), x: try r.i32(), y: try r.i32(), z: try r.i32(), json: try r.blob())
         case 48: msg = .disconnect(reason: try r.str())
-        default: throw PacketReader.Err.badType(type)
+        default: throw NetProtocolError.badType(type)
         }
-        guard r.off == data.count else { throw PacketReader.Err.trailingBytes(data.count - r.off) }
+        guard r.off == data.count else { throw NetProtocolError.trailingBytes(data.count - r.off) }
         return msg
     }
 }
@@ -408,10 +435,13 @@ public func encodeChunkForWire(_ c: Chunk) -> Data {
         withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
     }
     putU32(c.blocks.count)
-    c.blocks.withUnsafeBufferPointer { bp in
-        bp.baseAddress!.withMemoryRebound(to: UInt8.self, capacity: c.blocks.count * 2) { p in
-            data.append(p, count: c.blocks.count * 2)
-        }
+    // explicit little-endian, element by element — no withMemoryRebound (that
+    // reinterprets native byte order, which only happens to match LE on the
+    // little-endian hosts we build for; this stays correct if that changes)
+    data.reserveCapacity(data.count + c.blocks.count * 2)
+    for v in c.blocks {
+        var le = v.littleEndian
+        withUnsafeBytes(of: &le) { data.append(contentsOf: $0) }
     }
     putU32(c.biomes.count)
     data.append(contentsOf: c.biomes)
@@ -421,7 +451,10 @@ public func encodeChunkForWire(_ c: Chunk) -> Data {
        let obj = try? JSONSerialization.jsonObject(with: enc) {
         tail["blockEntities"] = obj
     }
-    let json = (try? JSONSerialization.data(withJSONObject: tail)) ?? Data("{}".utf8)
+    // sortedKeys: the JSON tail is protocol-visible (rides the wire in every
+    // chunkData message) — pin its byte order regardless of Dictionary's
+    // internal (hash-seed-dependent) iteration order
+    let json = (try? JSONSerialization.data(withJSONObject: tail, options: [.sortedKeys])) ?? Data("{}".utf8)
     putU32(json.count)
     data.append(json)
     return data
@@ -442,10 +475,14 @@ public func decodeWireChunk(_ data: Data, dim: Int, cx: Int, cz: Int) -> ChunkRe
     let flags = data[data.startIndex + 4]
     off += 1
     if flags & 1 != 0 {
-        guard let nBlocks = readU32(), off + nBlocks * 2 <= data.count else { return nil }
+        guard let nBlocks = readU32(), nBlocks >= 0, off + nBlocks * 2 <= data.count else { return nil }
         var blocks = [UInt16](repeating: 0, count: nBlocks)
-        data.subdata(in: (data.startIndex + off)..<(data.startIndex + off + nBlocks * 2)).withUnsafeBytes { raw in
-            blocks.withUnsafeMutableBytes { dst in dst.copyMemory(from: raw) }
+        // explicit little-endian, unaligned-safe — mirrors PacketReader.u16()
+        let blockBytes = data.subdata(in: (data.startIndex + off)..<(data.startIndex + off + nBlocks * 2))
+        blockBytes.withUnsafeBytes { raw in
+            for i in 0..<nBlocks {
+                blocks[i] = UInt16(littleEndian: raw.loadUnaligned(fromByteOffset: i * 2, as: UInt16.self))
+            }
         }
         off += nBlocks * 2
         let maxId = UInt16(blockDefs.count)

@@ -5,9 +5,13 @@
 // The GUEST regenerates unmodified terrain from the seed, fetches modified
 // chunks from the host, runs only its own player physics, and renders shadow
 // entities interpolated toward the host's states.
+//
+// Depends only on the NetTransport* protocols, never a concrete transport —
+// the concrete Apple sockets/Bonjour live in PebbleNetApple. Callbacks used
+// to hop to DispatchQueue.main directly; that's now an injected `executor`
+// (still defaulting to DispatchQueue.main.async) so a test can run inline.
 
 import Foundation
-import Network
 
 @inline(__always) private func stackJSON(_ s: ItemStack?) -> Data {
     s.flatMap { try? JSONEncoder().encode($0) } ?? Data()
@@ -18,6 +22,16 @@ import Network
 @inline(__always) private func netChunkKeyStr(_ dim: Int, _ cx: Int, _ cz: Int) -> String {
     "\(dim):\(cx):\(cz)"
 }
+
+/// used for every JSON payload that crosses the wire and contains a
+/// Dictionary (NetWelcome.dims/gameRules/players, NetTimeSync.dims) — Swift's
+/// Dictionary iteration order is hash-seed-dependent, so without sortedKeys
+/// the wire bytes would differ run to run for identical content (C2)
+private let netWireJSONEncoder: JSONEncoder = {
+    let e = JSONEncoder()
+    e.outputFormatting = [.sortedKeys]
+    return e
+}()
 
 /// build the on-wire state for any player entity
 func netStateOf(_ p: Player, dim: Dim, swing: Bool) -> NetPlayerState {
@@ -81,7 +95,9 @@ public final class NetHostSession {
 
     unowned let game: GameCore
     let serviceName: String
-    private let listener = NetListener()
+    private let factory: any NetTransportFactory
+    private let executor: (@escaping () -> Void) -> Void
+    private var listener: (any NetTransportListener)?
     private var guests: [Guest] = []
     private var stopped = false
     /// no host player — a standalone pebserver world
@@ -95,16 +111,20 @@ public final class NetHostSession {
     public var guestCount: Int { guests.lazy.filter { $0.ready }.count }
     public var guestNames: [String] { guests.filter { $0.ready }.map { $0.name } }
     /// TCP port once the listener is ready (0 before) — tests dial it directly
-    public var port: UInt16 { listener.port }
+    public var port: UInt16 { listener?.boundPort ?? 0 }
     public var hostName: String
 
     public init(game: GameCore, hostName: String, worldName: String,
-                dedicated: Bool = false, fixedPort: UInt16? = nil) {
+                dedicated: Bool = false, fixedPort: UInt16? = nil,
+                factory: any NetTransportFactory = NetTransportDefaults.factory,
+                executor: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
         self.game = game
         self.hostName = hostName
         self.worldName = worldName
         self.dedicated = dedicated
         self.fixedPort = fixedPort
+        self.factory = factory
+        self.executor = executor
         serviceName = dedicated ? worldName : "\(hostName) — \(worldName)"
     }
 
@@ -115,29 +135,40 @@ public final class NetHostSession {
     }
 
     public func start() throws {
-        listener.onConnection = { [weak self] conn in
-            guard let self, !self.stopped else {
-                conn.close()
-                return
-            }
-            let g = Guest(conn)
-            self.guests.append(g)
-            conn.onMessage = { [weak self, weak g] msg in
-                guard let self, let g else { return }
-                self.handle(g, msg)
-            }
-            conn.onClosed = { [weak self, weak g] _ in
-                guard let self, let g else { return }
-                self.dropGuest(g, announce: true)
+        let l = try factory.listen(port: fixedPort ?? 0)
+        l.onAccept = { [weak self] conn in
+            self?.executor { [weak self] in
+                guard let self, !self.stopped else {
+                    conn.close()
+                    return
+                }
+                let g = Guest(conn)
+                self.guests.append(g)
+                conn.onMessage = { [weak self, weak g] msg in
+                    self?.executor { [weak self, weak g] in
+                        guard let self, let g else { return }
+                        self.handle(g, msg)
+                    }
+                }
+                conn.onClosed = { [weak self, weak g] _ in
+                    self?.executor { [weak self, weak g] in
+                        guard let self, let g else { return }
+                        self.dropGuest(g, announce: true)
+                    }
+                }
             }
         }
-        try listener.start(serviceName: serviceName, fixedPort: fixedPort, txt: [
-            "pid": dedicated ? "" : (game.settings.playerId ?? ""),
-            "name": hostName,
-            "world": worldName,
-            "ver": PEBBLE_VERSION,
-            "srv": dedicated ? "1" : "0",
-        ])
+        try l.start()
+        if let advertising = l as? NetServiceAdvertising {
+            advertising.advertise(serviceName: serviceName, type: NET_SERVICE_TYPE, txt: [
+                "pid": dedicated ? "" : (game.settings.playerId ?? ""),
+                "name": hostName,
+                "world": worldName,
+                "ver": PEBBLE_VERSION,
+                "srv": dedicated ? "1" : "0",
+            ])
+        }
+        listener = l
         installWorldHooks()
     }
 
@@ -150,7 +181,8 @@ public final class NetHostSession {
             removePuppet(g)
         }
         guests.removeAll()
-        listener.stop()
+        listener?.stop()
+        listener = nil
     }
 
     // ---- world hooks: broadcast block changes / sounds / particles ----------
@@ -350,10 +382,10 @@ public final class NetHostSession {
             if let op = other.puppet { wel.players["\(op.id)"] = other.name }
         }
         wel.modifiedKeys = game.netModifiedKeyList()
-        if let pd = saved, let blob = try? JSONSerialization.data(withJSONObject: pd) {
+        if let pd = saved, let blob = try? JSONSerialization.data(withJSONObject: pd, options: [.sortedKeys]) {
             wel.playerData = blob
         }
-        if let json = try? JSONEncoder().encode(wel) {
+        if let json = try? netWireJSONEncoder.encode(wel) {
             g.conn.send(.welcome(json: json))
         }
         // introduce everyone
@@ -566,7 +598,7 @@ public final class NetHostSession {
                 sync.dims["\(d.rawValue)"] = DimState(time: dw.time, dayTime: dw.dayTime, raining: dw.raining,
                                                       thundering: dw.thundering, weatherTimer: dw.weatherTimer)
             }
-            if let json = try? JSONEncoder().encode(sync) {
+            if let json = try? netWireJSONEncoder.encode(sync) {
                 broadcast(.timeSync(json: json))
             }
         }
@@ -591,7 +623,7 @@ public final class NetHostSession {
                 g.knownEntities.insert(ent.id)
                 var d = ent.save()
                 d["eid"] = ent.id
-                if let json = try? JSONSerialization.data(withJSONObject: d) {
+                if let json = try? JSONSerialization.data(withJSONObject: d, options: [.sortedKeys]) {
                     g.conn.send(.entitySpawn(eid: Int32(ent.id), dim: dim, json: json))
                 }
             }
@@ -625,7 +657,8 @@ public final class NetHostSession {
         }
         let gone = g.knownEntities.subtracting(seen)
         if !gone.isEmpty {
-            g.conn.send(.entityRemove(eids: gone.map { Int32($0) }))
+            // C2: Set iteration order is unstable — sort before it hits the wire
+            g.conn.send(.entityRemove(eids: gone.sorted().map { Int32($0) }))
             g.knownEntities = seen
         }
     }
@@ -655,6 +688,7 @@ public final class NetGuestSession {
     unowned let game: GameCore
     let conn: NetConnection
     public let myName: String
+    private let executor: (@escaping () -> Void) -> Void
     /// join-flow status surfaced by the UI ("connecting…", error text)
     public private(set) var status = "connecting…"
     public private(set) var joined = false
@@ -672,16 +706,21 @@ public final class NetGuestSession {
     private var pendingSwing = false
     private var saveTimer = 0
 
-    public init(game: GameCore, conn: NetConnection, name: String) {
+    public init(game: GameCore, conn: NetConnection, name: String,
+                executor: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.main.async(execute: $0) }) {
         self.game = game
         self.conn = conn
         myName = name
+        self.executor = executor
     }
 
     public func start(skin: Data) {
-        conn.onMessage = { [weak self] msg in self?.handle(msg) }
-        conn.onClosed = { [weak self] reason in self?.connectionLost(reason) }
-        conn.start()
+        conn.onMessage = { [weak self] msg in
+            self?.executor { [weak self] in self?.handle(msg) }
+        }
+        conn.onClosed = { [weak self] reason in
+            self?.executor { [weak self] in self?.connectionLost(reason) }
+        }
         conn.send(.hello(name: myName, pid: game.settings.playerId ?? "",
                          version: PEBBLE_VERSION, proto: NET_PROTOCOL_VERSION, skin: skin))
     }
@@ -976,7 +1015,7 @@ public final class NetGuestSession {
     public func sendPlayerSave() {
         guard joined, !stopped, let p = game.player else { return }
         let payload: [String: Any] = ["dim": game.dim.rawValue, "data": p.save()]
-        if let json = try? JSONSerialization.data(withJSONObject: payload) {
+        if let json = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) {
             conn.send(.playerSave(json: json))
         }
     }
