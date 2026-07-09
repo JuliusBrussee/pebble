@@ -27,6 +27,11 @@ jobs:
           swift build -c release --target PebbleCoreBase
           swift build -c release --target CPebblePlatform
           swift build -c release --target pebsmoke_deterministic
+          swift build -c release --target PebbleRenderABI
+          swift build -c release --target PebbleCodecs
+          swift build -c release --target PebbleAudioCore
+          swift build -c release --target PebblePlatformNative
+          swift build -c release --target pebsmoke_portable
       - name: Run deterministic smoke
         env:
           PEBBLE_CI: "1"
@@ -34,6 +39,13 @@ jobs:
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
         run: |
           swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$RUNNER_TEMP/pebsmoke-deterministic.json"
+      - name: Run portable smoke (vck1)
+        env:
+          PEBBLE_CI: "1"
+          PEBBLE_DATA_DIR: ${{ runner.temp }}/pebble-data
+          PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
+        run: |
+          swift run -c release pebsmoke-portable --require-suite vck1 --report-json "$RUNNER_TEMP/pebsmoke-portable.json"
       - name: Preserve macOS app/server/full smoke builds
         run: |
           swift build -c release --target Pebble
@@ -44,7 +56,7 @@ jobs:
       - name: Portable import hygiene
         shell: bash
         run: |
-          if git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|SQLite3|Darwin|simd)|CFAbsoluteTimeGetCurrent|Application Support' -- Sources/PebbleCoreBase Sources/pebsmoke_deterministic Sources/CPebblePlatform; then
+          if git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|SQLite3|Darwin|simd|CoreGraphics|ImageIO|Compression)|CFAbsoluteTimeGetCurrent|Application Support' -- Sources/PebbleCoreBase Sources/pebsmoke_deterministic Sources/CPebblePlatform Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/pebsmoke_portable; then
             echo "portable target hygiene failed" >&2
             exit 1
           fi
@@ -84,3 +96,7 @@ jobs:
           PEBBLE_DATA_DIR: ${{ runner.temp }}\pebble-data
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}\goldens
         run: swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$env:RUNNER_TEMP\pebsmoke-deterministic.json"
+      # pebsmoke-portable is NOT built on Windows yet: it depends on PebbleCore, which still
+      # imports Network/SQLite3 directly. Lane B (persistence/VCK1 -> PebbleStoreSQLite) and
+      # lane C (network -> PebbleNetApple) must land and PebbleCore must stop importing those
+      # frameworks before pebsmoke-portable can be added to this job.
