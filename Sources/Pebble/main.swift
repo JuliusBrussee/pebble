@@ -4,8 +4,11 @@
 
 import AppKit
 import MetalKit
+import PebbleAudioCore
 import PebbleCore
 import PebbleNetApple
+import PebbleRenderABI
+import PebbleStoreSQLite
 
 // ---------------------------------------------------------------------------
 // NSEvent keyCode (kVK_*) → internal key-code strings (GameCore keybinds)
@@ -372,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MTKViewDelegate, NSWin
     var game: GameCore!
     var ui: UIManager!
     let hud = HUD()
-    let audio = AudioEngineM()
+    let audio: any AudioService = AudioEngineM()
     private var lastFrame = CACurrentMediaTime()
     private var startTime = CACurrentMediaTime()
     private var fpsCounter = 0
@@ -396,13 +399,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MTKViewDelegate, NSWin
     func applicationDidFinishLaunching(_ notification: Notification) {
         gAppDelegate = self
         let t0 = CFAbsoluteTimeGetCurrent()
-        game = GameCore(services: .platformDefault())
+        let paths = PebbleDataPaths.platformDefault()
+        guard let worldStore = try? SQLiteWorldStore(paths: paths) else {
+            fatalError("could not open Pebble world store")
+        }
+        game = GameCore(services: EngineServices(paths: paths, worldStore: worldStore))
         game.host = host
         host.app = self
         print(String(format: "registries: %.0fms (%d blocks, %d items, %d biomes)",
                      (CFAbsoluteTimeGetCurrent() - t0) * 1000, blockDefs.count, itemDefs.count, BIOMES.count))
 
-        guard let device = MTLCreateSystemDefaultDevice() else { fatalError("no Metal device") }
+        let requestedRenderer = RendererSelection.parse(
+            arguments: CommandLine.arguments,
+            environment: ProcessInfo.processInfo.environment)
+        let selectedRenderer: RendererSelection
+        do {
+            selectedRenderer = try RendererAvailability.resolve(
+                requestedRenderer, metalAvailable: MTLCreateSystemDefaultDevice() != nil,
+                vulkanAvailable: false)
+        } catch {
+            fatalError("\(error)")
+        }
+        guard selectedRenderer == .metal, let device = MTLCreateSystemDefaultDevice() else {
+            fatalError("selected renderer failed to initialize")
+        }
         let t1 = CFAbsoluteTimeGetCurrent()
         renderer = WorldRenderer(device: device)
         ui = UIManager(cv: UICanvas(device: device))
@@ -442,8 +462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MTKViewDelegate, NSWin
             self?.enterFullscreenAtLaunch()
         }
 
-        audio.initEngine()
-        audio.applyVolumes(game.settings.volumes)
+        audio.start()
+        audio.setVolumes(game.settings.volumes)
         audio.onSubtitle = { [weak self] text in
             guard let self, self.game.settings.subtitles else { return }
             self.hud.pushSubtitle(text)
@@ -587,7 +607,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, MTKViewDelegate, NSWin
             hud.debugInfo["sections"] = String(renderer.sections.count)
             hud.debugInfo["drawCalls"] = String(renderer.drawCalls)
             hud.debugInfo["mem"] = "n/a"
-            audio.applyVolumes(game.settings.volumes)
+            audio.setVolumes(game.settings.volumes)
             applyFpsMode()
             if game.hasWorld(), let p = game.player {
                 window.title = String(format: "Pebble — %d fps · %d sections · (%.0f, %.0f, %.0f)",

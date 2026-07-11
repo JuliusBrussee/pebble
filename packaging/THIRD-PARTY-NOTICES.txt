@@ -1,0 +1,18 @@
+Pebble third-party notices
+
+Faithful 32x texture pack
+Copyright Faithful team and contributors. Distributed under terms in
+FAITHFUL-LICENSE.txt. https://faithfulpack.net/
+
+fdlibm-derived trigonometry
+Copyright Sun Microsystems, Inc. Permissive notice retained in
+Sources/PebbleCore/Core/DetMath.swift and Sources/PebbleCoreBase/DetMath.swift.
+
+Swift runtime and ICU
+Windows portable artifacts may redistribute Swift runtime and ICU libraries
+under licenses supplied with Swift toolchain. Corresponding notices must ship
+beside artifact before release.
+
+Vulkan
+Vulkan headers and loader are Apache-2.0 licensed. Windows graphics drivers
+are supplied by user/system and are not redistributed by Pebble.

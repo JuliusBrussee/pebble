@@ -138,8 +138,39 @@ bundle() {
     cp "$REPO/packaging/"*.zip          "$stage/Contents/Resources/" 2>/dev/null || true
     # the Faithful license must travel with the pack (their requirement #6)
     cp "$REPO/packaging/FAITHFUL-LICENSE.txt" "$stage/Contents/Resources/" 2>/dev/null || true
+    cp "$REPO/packaging/THIRD-PARTY-NOTICES.txt" "$stage/Contents/Resources/"
+    cp "$REPO/LICENSE" "$stage/Contents/Resources/LICENSE"
     cp "$REPO/.build/release/Pebble"    "$stage/Contents/MacOS/Pebble"
     codesign --force --sign - "$stage" >/dev/null 2>&1 || warn "codesign failed — the app may trip Gatekeeper"
+}
+
+verify_bundle() {
+    local stage="$REPO/dist/$APP_NAME.app"
+    local contents="$stage/Contents" resources="$stage/Contents/Resources"
+    [ -x "$contents/MacOS/Pebble" ] || die "package missing executable"
+    for file in Info.plist Resources/AppIcon.icns Resources/logo.png Resources/title-bg.png \
+                "Resources/Faithful 32x - 1.20.1.zip" Resources/LICENSE \
+                Resources/FAITHFUL-LICENSE.txt Resources/THIRD-PARTY-NOTICES.txt; do
+        [ -f "$contents/$file" ] || die "package missing $file"
+    done
+    local plist_version source_version
+    plist_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$contents/Info.plist")"
+    source_version="$(sed -n 's/^public let PEBBLE_VERSION = "\([^"]*\)"/\1/p' "$REPO/Sources/PebbleCore/Game/Saves.swift")"
+    [ "$plist_version" = "$source_version" ] || die "version mismatch: plist=$plist_version source=$source_version"
+    codesign --verify --deep --strict "$stage" >/dev/null 2>&1 || die "bundle signature invalid"
+}
+
+package_macos() {
+    need_swift
+    build
+    bundle
+    verify_bundle
+    local version archive
+    version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$REPO/dist/$APP_NAME.app/Contents/Info.plist")"
+    archive="$REPO/dist/Pebble-macos-arm64-$version.zip"
+    (cd "$REPO/dist" && ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$(basename "$archive")")
+    shasum -a 256 "$archive" > "$archive.sha256"
+    say "Artifact: $archive"
 }
 
 deploy() {
@@ -189,6 +220,7 @@ case "${1:-}" in
     run)     cmd_run ;;
     test)    cmd_test ;;
     serve)   cmd_serve "$@" ;;
+    package) package_macos ;;
     *)
         echo "${BOLD}pebble${RESET} — one-command install for the Pebble app"
         echo
@@ -197,5 +229,6 @@ case "${1:-}" in
         echo "  pebble run          launch Pebble"
         echo "  pebble test         run the golden test suite"
         echo "  pebble serve        run a world as a standalone server (SMP) — try: pebble serve --help"
+        echo "  pebble package      build verified macOS release zip + SHA256"
         ;;
 esac

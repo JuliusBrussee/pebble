@@ -11,8 +11,10 @@
 
 import Foundation
 import PebbleCore
+import PebbleNetNative
 #if os(macOS)
 import PebbleNetApple
+import PebbleStoreSQLite
 #endif
 
 setbuf(stdout, nil)
@@ -21,6 +23,8 @@ setbuf(stdout, nil)
 // see NetTransportDefaults in PebbleCore/Net/NetTransport.swift
 #if os(macOS)
 AppleNetTransportFactory.installAsDefault()
+#else
+NativeNetTransportFactory.installAsDefault()
 #endif
 
 // ---- tiny arg parser --------------------------------------------------------
@@ -96,7 +100,15 @@ do {
     print("error: couldn't resolve data root: \(error)")
     exit(2)
 }
+#if os(macOS)
+guard let sqliteStore = try? SQLiteWorldStore(paths: paths) else {
+    print("error: couldn't open SQLite world store")
+    exit(2)
+}
+let game = GameCore(services: EngineServices(paths: paths, worldStore: sqliteStore))
+#else
 let game = GameCore(services: .live(paths: paths))
+#endif
 
 func stamp() -> String {
     let f = DateFormatter()

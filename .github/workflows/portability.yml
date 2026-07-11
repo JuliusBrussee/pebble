@@ -31,6 +31,7 @@ jobs:
           swift build -c release --target PebbleCodecs
           swift build -c release --target PebbleAudioCore
           swift build -c release --target PebblePlatformNative
+          swift build -c release --target PebbleNetNative
           swift build -c release --target pebsmoke_portable
       - name: Run deterministic smoke
         env:
@@ -93,19 +94,81 @@ jobs:
           swift build -c release --target PebbleCodecs
           swift build -c release --target PebbleAudioCore
           swift build -c release --target PebblePlatformNative
-      - name: Run deterministic smoke only
+          swift build -c release --target PebbleCore
+          swift build -c release --target PebbleNetNative
+          swift build -c release --target pebsmoke_portable
+          swift build -c release --target pebserver
+      - name: Run deterministic and portable smoke
         shell: pwsh
         env:
           PEBBLE_CI: "1"
           PEBBLE_DATA_DIR: ${{ runner.temp }}\pebble-data
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}\goldens
-        run: swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$env:RUNNER_TEMP\pebsmoke-deterministic.json"
-      # pebsmoke-portable and PebbleCore are NOT built on Windows yet. The network lane
-      # (wave 1) removed `import Network` from PebbleCore entirely, but PebbleCore still
-      # imports `simd` (Core/MathX.swift) and `SQLite3` (Game/Saves.swift) directly — both
-      # forbidden for portable targets. Those removals belong to the math-time lane
-      # (Mat4 -> Mat4f) and the persistence lane (SaveDB -> WorldStore/PebbleStoreSQLite),
-      # neither of which has landed yet. pebsmoke_portable depends on PebbleCore in
-      # Package.swift, so it inherits the same block. PebbleRenderABI/PebbleCodecs/
-      # PebbleAudioCore/PebblePlatformNative above have no PebbleCore dependency and are
-      # confirmed import-clean, so they build standalone here.
+        run: |
+          swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$env:RUNNER_TEMP\pebsmoke-deterministic.json"
+          swift run -c release pebsmoke-portable --require-suite vck1 --require-suite protocol --require-suite renderabi --require-suite codecs --report-json "$env:RUNNER_TEMP\pebsmoke-portable.json"
+      - name: Portable import hygiene
+        shell: pwsh
+        run: |
+          $hits = git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|Darwin|simd|CoreGraphics|ImageIO|Compression)' -- Sources/PebbleCore Sources/PebbleCoreBase Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/PebbleNetNative
+          if ($LASTEXITCODE -eq 0) { Write-Output $hits; throw "portable target hygiene failed" }
+
+  macos-vulkan:
+    name: macOS MoltenVK bootstrap and capture
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vulkan and SDL3
+        run: brew install vulkan-loader vulkan-headers molten-vk vulkan-validationlayers shaderc spirv-tools sdl3
+      - name: Export native paths
+        run: |
+          echo "C_INCLUDE_PATH=$(brew --prefix)/include" >> "$GITHUB_ENV"
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+          echo "DYLD_LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=$(brew --prefix)/share/vulkan/icd.d/MoltenVK_icd.json" >> "$GITHUB_ENV"
+      - name: Compile Vulkan shaders
+        run: packaging/compile-vulkan-shaders.sh "$RUNNER_TEMP/vulkan-shaders"
+      - name: Build Vulkan targets
+        run: |
+          swift build -c release --target CPebbleVulkan
+          swift build -c release --target PebbleRendererVulkan
+          swift build -c release --product pebvk
+      - name: Vulkan validation positive control and offscreen capture
+        run: swift run -c release pebvk --validation --output "$RUNNER_TEMP/vulkan-clear.png" --info-json "$RUNNER_TEMP/vulkan-info.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-vulkan-capture
+          path: |
+            ${{ runner.temp }}/vulkan-clear.png
+            ${{ runner.temp }}/vulkan-info.json
+
+  windows-client:
+    name: Windows SDL3 Vulkan client and package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - name: Install SDL3 and Vulkan SDK
+        shell: pwsh
+        run: |
+          vcpkg install sdl3:x64-windows
+          choco install vulkan-sdk -y --no-progress
+          "SDL3_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows" | Out-File $env:GITHUB_ENV -Append
+          "C_INCLUDE_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$env:VULKAN_SDK\Include" | Out-File $env:GITHUB_ENV -Append
+          "LIBRARY_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$env:VULKAN_SDK\Lib" | Out-File $env:GITHUB_ENV -Append
+      - name: Build client and server
+        shell: pwsh
+        run: |
+          swift build -c release --product pebble-win
+          swift build -c release --product pebserver
+      - name: Stage portable package
+        shell: pwsh
+        run: packaging/package-windows.ps1 -SkipBuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pebble-windows-x64
+          path: |
+            dist/Pebble-windows-x64-*.zip
+            dist/Pebble-windows-x64-*.zip.sha256

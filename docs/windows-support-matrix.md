@@ -1,24 +1,25 @@
 # Windows support matrix
 
-A row may only move to "shipped" when a CI job compiles AND runs it on that OS. Nothing here is aspirational — this reflects `.github/workflows/portability.yml` as it exists today, 2026-07-09.
+Implementation status from current source tree. Work in this porting batch was intentionally not built or run; new rows remain `experimental` until CI evidence exists.
 
-| Capability | macOS | Windows | Status (shipped/experimental/blocked) | Evidence |
+| Capability | macOS | Windows | Status | Current source evidence |
 |---|---|---|---|---|
-| `PebbleCoreBase` (determinism, math, noise, VCK1 codec) | shipped | shipped | shipped | `portability.yml` macOS and Windows jobs both `swift build -c release --target PebbleCoreBase` |
-| `CPebblePlatform` (C ABI skeleton, all capability flags 0) | shipped | shipped | shipped | `portability.yml` macOS and Windows jobs both `swift build -c release --target CPebblePlatform` |
-| `pebsmoke-deterministic` (deterministic-only smoke) | shipped | shipped | shipped | `portability.yml` macOS and Windows jobs both build and `swift run` it with `--require-suite deterministic` |
-| `PebblePlatformNative` (Swift wrapper over `CPebblePlatform`) | shipped | blocked | experimental on macOS, blocked on Windows | macOS job builds it via `--target PebblePlatformNative`; Windows job does not reference it |
-| `PebbleRenderABI` (vertex/uniform layouts, frame packet, capture, shader manifest) | shipped | blocked | experimental | Real content landed (wave 1, lane D03: no Metal/Vulkan/simd imports). macOS job builds it and runs `pebsmoke-portable --require-suite renderabi` (102 checks). Windows job now also `swift build -c release --target PebbleRenderABI` (standalone, no `PebbleCore` dependency) but nothing exercises it there yet — `pebsmoke-portable` itself cannot build on Windows (see that row), so this is compiled-on-Windows-CI, not run-on-Windows-CI |
-| `PebbleCodecs` (PNG/ZIP/DEFLATE/Adler32/CRC32) | shipped | blocked | experimental | Real content landed (wave 1, lane E3a: no ImageIO/Compression imports). macOS job builds it and runs `pebsmoke-portable --require-suite codecs` (36 checks). Windows job now also builds it standalone, same compiled-not-run caveat as `PebbleRenderABI` above |
-| `PebbleAudioCore` | blocked | blocked | blocked (empty placeholder) | Target exists and builds on both macOS and Windows CI now; no audio implementation yet — lane E (audio) has not landed |
-| `pebsmoke-portable` (portable smoke harness) | experimental | blocked | experimental on macOS, blocked on Windows | macOS job builds it and runs `--require-suite vck1 --require-suite protocol --require-suite renderabi --require-suite codecs` (201 checks across those 4 suites; `math`/`persistence`/`audio`/`sockets` still run 0 checks — those lanes have not landed). Windows job still does not build it: it depends on `PebbleCore` in `Package.swift`, and `PebbleCore` still imports `simd` (`Core/MathX.swift`) and `SQLite3` (`Game/Saves.swift`) directly. `import Network` was removed from `PebbleCore` in wave 1 (see Networking row) but that alone wasn't enough — the math-time lane (`Mat4` → `Mat4f`) and the persistence lane (`SaveDB` → `WorldStore`/`PebbleStoreSQLite`) still need to land |
-| Rendering (Metal) | shipped | blocked | shipped on macOS, blocked on Windows | macOS job builds `Pebble` (AppKit+Metal); no Windows renderer exists |
-| Rendering (Vulkan / MoltenVK) | blocked | blocked | blocked | No Vulkan SDK, no MoltenVK, no `glslc`/`glslang`, no `cmake` on the dev machine or in CI; nothing has been compiled or run |
-| Audio (AVFoundation) | shipped | blocked | shipped on macOS, blocked on Windows | `Pebble` links `AVFoundation` on macOS only |
-| Audio (miniaudio) | blocked | blocked | blocked | Not vendored, not compiled, not run anywhere |
-| Resource packs / codecs (PNG/ZIP) | blocked | blocked | blocked | `PebbleCodecs` has real PNG/ZIP/DEFLATE decode logic (see row above) but nothing in `Sources/Pebble` (resource-pack loading) calls it yet — still Apple `ImageIO`/`Compression` on the consuming side |
-| Networking (`Network.framework`) | shipped | blocked | shipped on macOS, blocked on Windows | Wave 1: `import Network` fully removed from `PebbleCore`/`Pebble` — the Apple socket/Bonjour adapter now lives entirely in `PebbleNetApple` (macOS-only target). `Pebble/main.swift` and `pebserver/main.swift` call `AppleNetTransportFactory.installAsDefault()` at startup (macOS-gated in `pebserver`) so LAN hosting/joining and Bonjour discovery use real sockets, not the portable in-memory transport. No Windows socket transport exists (native `CPebblePlatform` sockets are still unimplemented — see next row) |
-| Networking (native sockets via `CPebblePlatform`) | blocked | blocked | blocked | `CPebblePlatform`'s `has_sockets` capability flag is hardcoded `0`; no socket code exists. `pebsmoke-portable`'s `sockets` suite is still a stub (0 checks) — this is separate work from the wave-1 network lane, which rewrote the higher-level `NetTransport`/wire-protocol layer, not a native-socket backend |
-| Persistence (SQLite world store) | shipped | blocked | shipped on macOS, blocked on Windows | `PebbleCore`'s `Game/Saves.swift` still imports `SQLite3` directly and links it on macOS only; no Windows-portable store exists. The persistence lane (`SaveDB` → `any WorldStore`, moving the SQLite3 residue into `PebbleStoreSQLite`) has not landed |
-| Full app (`Pebble`, AppKit + Metal) | shipped | blocked | shipped on macOS, blocked on Windows | `portability.yml` macOS job builds `Pebble`, `pebserver`, `pebsmoke` at `-c release`; Windows job builds none of them |
-| Dedicated server (`pebserver`) | shipped | blocked | shipped on macOS, blocked on Windows | macOS job builds `pebserver`; Windows job does not reference it — depends on `PebbleCore`'s macOS-only networking/persistence |
+| `PebbleCoreBase` | shipped | shipped | shipped | Existing selected-target CI |
+| `PebbleCore` | shipped | experimental | experimental | Portable `Mat4f`; no active `Network`, `simd`, or `SQLite3` import; Windows CI job now selects target |
+| `PebbleRenderABI` | shipped | experimental | experimental | Neutral resources, `FrameBuilder`, deterministic draw ordering, backend protocol |
+| Metal renderer | shipped | unavailable | shipped on macOS | Chunk passes consume neutral `FramePacket`; remaining passes still being migrated |
+| Vulkan bootstrap | experimental | experimental | experimental | `CPebbleVulkan`, Vulkan 1.2 instance/device, portability subset, validation positive control, offscreen clear/readback, PNG capture |
+| Vulkan game passes | incomplete | incomplete | incomplete | Chunk/shadow/UI/composite GLSL exists; pipeline/resource execution still pending |
+| `PebbleCodecs` | experimental | experimental | experimental | PNG, ZIP, DEFLATE; resource-pack consumer now uses portable codecs |
+| Native audio output | experimental | experimental | experimental | AudioUnit macOS and waveOut Windows C sinks; AVFoundation removed from default path |
+| Portable audio mixer | experimental | experimental | experimental | Shared stereo voice mixer, spatial gain/pan, environment filtering, reverb, native sink facade |
+| Apple networking | shipped | unavailable | shipped on macOS | Network.framework TCP and Bonjour adapter |
+| Native TCP networking | experimental | experimental | experimental | Cross-platform C sockets plus `PebbleNetNative`; server installs it outside macOS |
+| SQLite persistence | shipped | unavailable | shipped on macOS | Real `SQLiteWorldStore` isolated in `PebbleStoreSQLite` |
+| Directory persistence | experimental | experimental | experimental | Portable atomic JSON/VCK1 `DirectoryWorldStore` below injected data root |
+| Dedicated server | shipped | experimental | experimental | Windows target uses directory store and native TCP; selected by Windows CI |
+| Full graphical app | shipped | incomplete | incomplete | Windows platform shell and Vulkan frame execution still pending |
+| macOS package | shipped | unavailable | shipped on macOS | Manifest, licenses, version gate, codesign verification, zip and SHA256 path |
+| Windows portable package | unavailable | incomplete | incomplete | Manifest defined; staging/runtime-DLL closure script pending |
+
+No new `experimental` row is a release claim. Move to `shipped` only after target compiles and executes on matching CI runner.

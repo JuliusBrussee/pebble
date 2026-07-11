@@ -206,7 +206,7 @@ public final class GameCore {
     public let services: EngineServices
     public let settingsStore: SettingsStore
     public let socialStore: SocialStore
-    public let db: SaveDB
+    public let db: any WorldStore
     public var settings: Settings
     public var keybinds: [String: String]
 
@@ -1039,11 +1039,11 @@ public final class GameCore {
                 ready.append((key, c, (c.cx - pcx) * (c.cx - pcx) + (c.cz - pcz) * (c.cz - pcz)))
             }
             ready.sort { $0.d < $1.d }
-            let t0 = CFAbsoluteTimeGetCurrent()
+            let t0 = services.monotonicClock.nowSeconds()
             for r in ready {
                 q.remove(r.key)
                 lightChunk(w, r.c)
-                if (CFAbsoluteTimeGetCurrent() - t0) * 1000 > LIGHT_BUDGET_MS { break }
+                if (services.monotonicClock.nowSeconds() - t0) * 1000 > LIGHT_BUDGET_MS { break }
             }
         }
         // self-heal: any chunk that slipped through the queue gets re-queued

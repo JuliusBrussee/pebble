@@ -47,14 +47,34 @@ final class AppleNetTransportConnection: NetTransportConnection {
     private var pendingClose: String?
     private var closed = false
 
+    // nw.receive completions run on nw's own background queue (started
+    // below) while onMessage/onClosed are assigned from whatever queue the
+    // caller uses (main, in production, via a real async hop) — this lock
+    // guards every field both sides touch so the two never race on it.
+    private let stateLock = NSLock()
+    private var rawOnMessage: ((NetMsg) -> Void)?
+    private var rawOnClosed: ((String) -> Void)?
+
     // buffering: NWConnection.start() begins receiving immediately, before
     // the caller has necessarily assigned onMessage/onClosed — queue and
     // flush on assignment so nothing delivered in that window is lost
     var onMessage: ((NetMsg) -> Void)? {
-        didSet { flushMessages() }
+        get { stateLock.lock(); defer { stateLock.unlock() }; return rawOnMessage }
+        set {
+            stateLock.lock()
+            rawOnMessage = newValue
+            stateLock.unlock()
+            flushMessages()
+        }
     }
     var onClosed: ((String) -> Void)? {
-        didSet { flushClose() }
+        get { stateLock.lock(); defer { stateLock.unlock() }; return rawOnClosed }
+        set {
+            stateLock.lock()
+            rawOnClosed = newValue
+            stateLock.unlock()
+            flushClose()
+        }
     }
 
     init(_ nw: NWConnection) {
@@ -76,7 +96,7 @@ final class AppleNetTransportConnection: NetTransportConnection {
             if let data, !data.isEmpty {
                 self.frameCodec.feed(data)
                 self.drainFrames()
-                if self.closed { return }
+                if self.isClosedNow() { return }
             }
             if isComplete || error != nil {
                 self.finish(error.map { "connection lost: \($0.localizedDescription)" } ?? "connection closed")
@@ -98,45 +118,75 @@ final class AppleNetTransportConnection: NetTransportConnection {
             guard let frame else { return }
             if let msg = try? NetMsg.decode(frame) {
                 deliver(msg)
-                if closed { return }   // handler may close mid-drain
+                if isClosedNow() { return }   // handler may close mid-drain
             }
             // unknown/corrupt individual frames are skipped — forward compatibility
         }
     }
 
     private func deliver(_ msg: NetMsg) {
+        FileHandle.standardError.write(Data("DEBUG deliver\n".utf8))
+        stateLock.lock()
         pendingMessages.append(msg)
+        stateLock.unlock()
         flushMessages()
     }
+    // drains one message at a time under the lock, invoking the callback
+    // outside it — safe against concurrent deliver()/onMessage-assignment
+    // callers, and never holds the lock while user code runs
     private func flushMessages() {
-        guard let cb = onMessage else { return }
-        while !pendingMessages.isEmpty { cb(pendingMessages.removeFirst()) }
+        while true {
+            stateLock.lock()
+            guard let cb = rawOnMessage, !pendingMessages.isEmpty else {
+                stateLock.unlock()
+                return
+            }
+            let msg = pendingMessages.removeFirst()
+            stateLock.unlock()
+            cb(msg)
+        }
+    }
+
+    private func isClosedNow() -> Bool {
+        stateLock.lock(); defer { stateLock.unlock() }
+        return closed
     }
 
     private func finish(_ reason: String) {
-        guard !closed else { return }
+        stateLock.lock()
+        guard !closed else { stateLock.unlock(); return }
         closed = true
-        nw.cancel()
         pendingClose = reason
+        stateLock.unlock()
+        nw.cancel()
         flushClose()
     }
     private func flushClose() {
-        guard closed, let cb = onClosed, let reason = pendingClose else { return }
+        stateLock.lock()
+        guard closed, let cb = rawOnClosed, let reason = pendingClose else {
+            stateLock.unlock()
+            return
+        }
         pendingClose = nil
+        stateLock.unlock()
         cb(reason)
     }
 
     func send(_ m: NetMsg) {
-        guard !closed else { return }
-        nw.send(content: FrameCodec.encode(m.encode()), completion: .contentProcessed { _ in })
+        guard !isClosedNow() else { FileHandle.standardError.write(Data("DEBUG send-skip-closed\n".utf8)); return }
+        nw.send(content: FrameCodec.encode(m.encode()), completion: .contentProcessed { err in
+            if let err { FileHandle.standardError.write(Data("DEBUG send-error \(err)\n".utf8)) }
+        })
     }
 
     /// voluntary local close — matches the portable transports: the peer
     /// observes it through its own onClosed, this side's onClosed never
     /// fires for a close it initiated itself
     func close() {
-        guard !closed else { return }
+        stateLock.lock()
+        guard !closed else { stateLock.unlock(); return }
         closed = true
+        stateLock.unlock()
         nw.cancel()
     }
 }

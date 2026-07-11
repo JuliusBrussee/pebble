@@ -10,7 +10,6 @@
 // regenerate terrain from seed and re-attach saved entities.
 
 import Foundation
-import SQLite3
 
 public struct DimState: Codable {
     public var time: Int
@@ -101,6 +100,23 @@ public struct ChunkRecord {
     }
 }
 
+/// Persistence boundary used by simulation and network sessions. Backends may
+/// use SQLite, flat files, memory, or host-provided storage without changing core.
+public protocol WorldStore: AnyObject {
+    func listWorlds() -> [WorldRecord]
+    func getWorld(_ id: String) -> WorldRecord?
+    func putWorld(_ record: WorldRecord)
+    func deleteWorld(_ id: String)
+    func chunkKey(_ worldId: String, _ dim: Int, _ cx: Int, _ cz: Int) -> String
+    func getChunkKeys(_ worldId: String) -> Set<String>
+    func getChunk(_ worldId: String, _ dim: Int, _ cx: Int, _ cz: Int) -> ChunkRecord?
+    @discardableResult func putChunks(_ records: [ChunkRecord]) -> Bool
+    func getPlayer(_ worldId: String) -> [String: Any]?
+    func putPlayer(_ worldId: String, _ data: [String: Any])
+    func getAdvancements(_ worldId: String) -> [String]?
+    func putAdvancements(_ worldId: String, _ ids: [String])
+}
+
 /// JSON can't carry NaN/Infinity (structured clone could) — scrub them so one
 /// blown-up velocity never poisons a whole chunk record
 private func sanitizeJSON(_ v: Any) -> Any {
@@ -110,9 +126,10 @@ private func sanitizeJSON(_ v: Any) -> Any {
     return v
 }
 
+#if false // Legacy in-core SQLite implementation retained temporarily for source archaeology; active backend is PebbleStoreSQLite.SQLiteWorldStore.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
-public final class SaveDB {
+public final class SaveDB: WorldStore {
     private var db: OpaquePointer?
     private let paths: PebbleDataPaths
 
@@ -446,3 +463,4 @@ public final class SaveDB {
         fflush(stdout)
     }
 }
+#endif

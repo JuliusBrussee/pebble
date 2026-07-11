@@ -5,6 +5,7 @@
 import Foundation
 import simd
 import PebbleCore
+import PebbleNetApple
 
 let smokeEnv = ProcessInfo.processInfo.environment
 let smokeInCI = smokeEnv["PEBBLE_CI"] == "1" || smokeEnv["CI"] != nil || smokeEnv["GITHUB_ACTIONS"] != nil
@@ -2246,6 +2247,77 @@ do {
     var trailing = full
     trailing.append(0xff)
     check("trailing bytes rejected", (try? NetMsg.decode(trailing)) == nil)
+}
+
+// ---------------------------------------------------------------------------
+section("Apple net transport (real sockets, concurrent accept race)")
+do {
+    // AppleNetTransportConnection starts receiving immediately in init(),
+    // before the caller has necessarily assigned onMessage. Production
+    // wiring (NetHostSession.start()'s onAccept) assigns onMessage from a
+    // real async hop off the accept path (DispatchQueue.main.async by
+    // default) -- so the accepted connection's background receive queue and
+    // the main-thread assignment race on the same buffered-message state.
+    // Stress this window directly against real loopback sockets.
+    let factory = AppleNetTransportFactory()
+    let roundsAT = 6
+    let msgsPerRound = 10
+    var totalSent = 0
+    var totalReceived = 0
+    var anyRoundLostOrDuplicated = false
+
+    for round in 0..<roundsAT {
+        guard let listener = try? factory.listen(port: 0) else {
+            check("apple transport: listener created (round \(round))", false)
+            continue
+        }
+        var received = 0
+        let receivedLock = NSLock()
+        let doneSem = DispatchSemaphore(value: 0)
+        listener.onAccept = { conn in
+            FileHandle.standardError.write(Data("DEBUG accepted round \(round)\n".utf8))
+            // mirrors NetHostSession's default executor: a real async hop to
+            // main, after the accepted connection already started receiving
+            DispatchQueue.main.async {
+                FileHandle.standardError.write(Data("DEBUG onMessage assigned round \(round)\n".utf8))
+                conn.onMessage = { _ in
+                    receivedLock.lock()
+                    received += 1
+                    let isDone = received >= msgsPerRound
+                    receivedLock.unlock()
+                    if isDone { doneSem.signal() }
+                }
+            }
+        }
+        do { try listener.start() } catch {
+            check("apple transport: listener started (round \(round))", false, "\(error)")
+            continue
+        }
+        guard let port = listener.boundPort, port != 0,
+              let client = try? factory.connect(to: NetEndpoint(host: "127.0.0.1", port: port)) else {
+            check("apple transport: client connected (round \(round))", false)
+            listener.stop()
+            continue
+        }
+        // blast messages immediately on a background thread, racing the
+        // deferred main-thread onMessage assignment above
+        DispatchQueue.global(qos: .userInitiated).async {
+            for i in 0..<msgsPerRound { client.send(.chat(text: "m\(i)")) }
+        }
+        let deadline = Date().addingTimeInterval(2.0)
+        while doneSem.wait(timeout: .now()) == .timedOut && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.005))
+        }
+        receivedLock.lock(); let gotThisRound = received; receivedLock.unlock()
+        FileHandle.standardError.write(Data("DEBUG round \(round) got \(gotThisRound)/\(msgsPerRound)\n".utf8))
+        totalSent += msgsPerRound
+        totalReceived += gotThisRound
+        if gotThisRound != msgsPerRound { anyRoundLostOrDuplicated = true }
+        client.close()
+        listener.stop()
+    }
+    check("apple transport: no messages lost/duplicated under concurrent accept (\(totalReceived)/\(totalSent))",
+          !anyRoundLostOrDuplicated && totalReceived == totalSent)
 }
 
 // ---------------------------------------------------------------------------

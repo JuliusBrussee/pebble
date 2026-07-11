@@ -6,140 +6,36 @@
 // pack doesn't cover. Pure app-layer: PebbleCore goldens never see any of it.
 
 import AppKit
-import Compression
-import CoreGraphics
 import Foundation
-import ImageIO
+import PebbleCodecs
 import PebbleCore
 
 // =============================================================================
-// minimal read-only zip (central directory + raw deflate via Compression)
+// portable ZIP facade
 // =============================================================================
 final class MiniZip {
-    struct Entry {
-        let method: UInt16
-        let compSize: Int
-        let uncompSize: Int
-        let localOffset: Int
-    }
-
-    private let data: Data
-    private(set) var entries: [String: Entry] = [:]
+    private let reader: ZipReader
+    private(set) var entries: [String: ZipReader.Entry]
 
     init?(url: URL) {
-        guard let d = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
-        data = d
-        guard parseCentralDirectory() else { return nil }
-    }
-
-    private func u16(_ o: Int) -> Int { Int(data[o]) | (Int(data[o + 1]) << 8) }
-    private func u32(_ o: Int) -> Int {
-        Int(data[o]) | (Int(data[o + 1]) << 8) | (Int(data[o + 2]) << 16) | (Int(data[o + 3]) << 24)
-    }
-
-    private func parseCentralDirectory() -> Bool {
-        // EOCD signature scan from the tail (comment can pad up to 64KB)
-        let n = data.count
-        guard n > 22 else { return false }
-        var eocd = -1
-        var i = n - 22
-        let stop = max(0, n - 22 - 65535)
-        while i >= stop {
-            if data[i] == 0x50, data[i + 1] == 0x4b, data[i + 2] == 0x05, data[i + 3] == 0x06 {
-                eocd = i
-                break
-            }
-            i -= 1
-        }
-        guard eocd >= 0 else { return false }
-        let count = u16(eocd + 10)
-        var off = u32(eocd + 16)
-        for _ in 0..<count {
-            guard off + 46 <= n, u32(off) == 0x02014b50 else { return false }
-            let method = UInt16(u16(off + 10))
-            let compSize = u32(off + 20)
-            let uncompSize = u32(off + 24)
-            let nameLen = u16(off + 28)
-            let extraLen = u16(off + 30)
-            let commentLen = u16(off + 32)
-            let localOffset = u32(off + 42)
-            guard off + 46 + nameLen <= n else { return false }
-            if let name = String(data: data.subdata(in: (off + 46)..<(off + 46 + nameLen)), encoding: .utf8),
-               !name.hasSuffix("/") {
-                entries[name] = Entry(method: method, compSize: compSize,
-                                      uncompSize: uncompSize, localOffset: localOffset)
-            }
-            off += 46 + nameLen + extraLen + commentLen
-        }
-        return true
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              let reader = try? ZipReader(data) else { return nil }
+        self.reader = reader
+        entries = reader.entries
     }
 
     func file(_ name: String) -> Data? {
-        guard let e = entries[name] else { return nil }
-        let lo = e.localOffset
-        guard lo + 30 <= data.count, u32(lo) == 0x04034b50 else { return nil }
-        // local header name/extra lengths can differ from the central record
-        let nameLen = u16(lo + 26)
-        let extraLen = u16(lo + 28)
-        let start = lo + 30 + nameLen + extraLen
-        guard start + e.compSize <= data.count else { return nil }
-        let raw = data.subdata(in: start..<(start + e.compSize))
-        if e.method == 0 { return raw }
-        guard e.method == 8 else { return nil }
-        // uncompSize is an untrusted u32 from the central directory — cap it
-        // so a tiny crafted zip can't force a multi-GB allocation
-        guard e.uncompSize <= 64 << 20 else { return nil }
-        var out = Data(count: e.uncompSize)
-        let written = out.withUnsafeMutableBytes { dst in
-            raw.withUnsafeBytes { src in
-                compression_decode_buffer(
-                    dst.bindMemory(to: UInt8.self).baseAddress!, e.uncompSize,
-                    src.bindMemory(to: UInt8.self).baseAddress!, raw.count,
-                    nil, COMPRESSION_ZLIB)
-            }
-        }
-        guard written == e.uncompSize else { return nil }
-        return out
+        try? reader.extract(name)
     }
 }
 
 // =============================================================================
 // PNG decode → straight (un-premultiplied) RGBA8
 // =============================================================================
-struct RGBAImage {
-    var width: Int
-    var height: Int
-    var pixels: [UInt8]   // straight RGBA, width*height*4
-}
+typealias RGBAImage = PNGImage
 
 func decodePNG(_ data: Data) -> RGBAImage? {
-    guard let src = CGImageSourceCreateWithData(data as CFData, nil),
-          let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
-    let w = img.width, h = img.height
-    guard w > 0, h > 0, w <= 4096, h <= 8192 else { return nil }
-    var px = [UInt8](repeating: 0, count: w * h * 4)
-    let info = CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
-    let ok = px.withUnsafeMutableBytes { raw -> Bool in
-        guard let ctx = CGContext(data: raw.baseAddress, width: w, height: h, bitsPerComponent: 8,
-                                  bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: info) else { return false }
-        ctx.interpolationQuality = .none
-        ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
-        return true
-    }
-    guard ok else { return nil }
-    // un-premultiply back to straight alpha (atlas + UI expect straight RGBA)
-    var i = 0
-    while i < px.count {
-        let a = Int(px[i + 3])
-        if a > 0 && a < 255 {
-            px[i] = UInt8(min(255, Int(px[i]) * 255 / a))
-            px[i + 1] = UInt8(min(255, Int(px[i + 1]) * 255 / a))
-            px[i + 2] = UInt8(min(255, Int(px[i + 2]) * 255 / a))
-        }
-        i += 4
-    }
-    return RGBAImage(width: w, height: h, pixels: px)
+    try? PNG.decode(data, maxPixelBytes: 4096 * 8192 * 4)
 }
 
 // ---- pixel helpers ----------------------------------------------------------

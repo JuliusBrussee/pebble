@@ -3,7 +3,6 @@
 // the projection/frustum forms adjusted from GL to Metal conventions.
 
 import Foundation
-import simd
 
 // ---- scalars -----------------------------------------------------------------
 @inline(__always) public func clampD(_ x: Double, _ lo: Double, _ hi: Double) -> Double { x < lo ? lo : (x > hi ? hi : x) }
@@ -39,24 +38,77 @@ public func easeInOutQuad(_ t: Double) -> Double { t < 0.5 ? 2 * t * t : 1 - pow
 public typealias Vec3 = SIMD3<Double>
 
 @inline(__always) public func vec3(_ x: Double = 0, _ y: Double = 0, _ z: Double = 0) -> Vec3 { Vec3(x, y, z) }
-@inline(__always) public func vLen(_ a: Vec3) -> Double { simd_length(a) }
-@inline(__always) public func vLenSq(_ a: Vec3) -> Double { simd_length_squared(a) }
-@inline(__always) public func vDist(_ a: Vec3, _ b: Vec3) -> Double { simd_distance(a, b) }
-@inline(__always) public func vDistSq(_ a: Vec3, _ b: Vec3) -> Double { simd_distance_squared(a, b) }
-@inline(__always) public func vDot(_ a: Vec3, _ b: Vec3) -> Double { simd_dot(a, b) }
-@inline(__always) public func vCross(_ a: Vec3, _ b: Vec3) -> Vec3 { simd_cross(a, b) }
+@inline(__always) public func vLenSq(_ a: Vec3) -> Double { a.x * a.x + a.y * a.y + a.z * a.z }
+@inline(__always) public func vLen(_ a: Vec3) -> Double { sqrt(vLenSq(a)) }
+@inline(__always) public func vDistSq(_ a: Vec3, _ b: Vec3) -> Double { vLenSq(a - b) }
+@inline(__always) public func vDist(_ a: Vec3, _ b: Vec3) -> Double { sqrt(vDistSq(a, b)) }
+@inline(__always) public func vDot(_ a: Vec3, _ b: Vec3) -> Double { a.x * b.x + a.y * b.y + a.z * b.z }
+@inline(__always) public func vCross(_ a: Vec3, _ b: Vec3) -> Vec3 {
+    Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+}
 @inline(__always) public func vLerp(_ a: Vec3, _ b: Vec3, _ t: Double) -> Vec3 { a + (b - a) * t }
 
 @inline(__always)
 public func vNorm(_ a: Vec3) -> Vec3 {
-    let l = simd_length(a)
+    let l = vLen(a)
     return l < 1e-9 ? Vec3() : a / l
 }
 
 // ---- Mat4 (Float, column-major, Metal clip space) ------------------------------
-public typealias Mat4 = simd_float4x4
+public struct Mat4f: Equatable, Sendable {
+    public var columns: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)
 
-public func mat4Identity() -> Mat4 { matrix_identity_float4x4 }
+    public init(_ diagonal: Float = 0) {
+        columns = (
+            SIMD4<Float>(diagonal, 0, 0, 0),
+            SIMD4<Float>(0, diagonal, 0, 0),
+            SIMD4<Float>(0, 0, diagonal, 0),
+            SIMD4<Float>(0, 0, 0, diagonal)
+        )
+    }
+
+    public init(columns: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>)) {
+        self.columns = columns
+    }
+
+    public subscript(_ column: Int) -> SIMD4<Float> {
+        get {
+            switch column {
+            case 0: return columns.0
+            case 1: return columns.1
+            case 2: return columns.2
+            case 3: return columns.3
+            default: preconditionFailure("Mat4f column out of range: \(column)")
+            }
+        }
+        set {
+            switch column {
+            case 0: columns.0 = newValue
+            case 1: columns.1 = newValue
+            case 2: columns.2 = newValue
+            case 3: columns.3 = newValue
+            default: preconditionFailure("Mat4f column out of range: \(column)")
+            }
+        }
+    }
+
+    public static func == (lhs: Mat4f, rhs: Mat4f) -> Bool {
+        lhs.columns.0 == rhs.columns.0 && lhs.columns.1 == rhs.columns.1 &&
+        lhs.columns.2 == rhs.columns.2 && lhs.columns.3 == rhs.columns.3
+    }
+
+    public static func * (lhs: Mat4f, rhs: Mat4f) -> Mat4f {
+        func transform(_ vector: SIMD4<Float>) -> SIMD4<Float> {
+            lhs[0] * vector.x + lhs[1] * vector.y + lhs[2] * vector.z + lhs[3] * vector.w
+        }
+        return Mat4f(columns: (transform(rhs[0]), transform(rhs[1]),
+                               transform(rhs[2]), transform(rhs[3])))
+    }
+}
+
+public typealias Mat4 = Mat4f
+
+public func mat4Identity() -> Mat4 { Mat4(1) }
 
 /// perspective with Metal depth range z' ∈ [0, 1]
 public func mat4Perspective(fovYRad: Float, aspect: Float, near: Float, far: Float) -> Mat4 {
@@ -84,14 +136,22 @@ public func mat4Ortho(l: Float, r: Float, b: Float, t: Float, n: Float, f: Float
 }
 
 public func mat4LookDir(eye: SIMD3<Float>, dir: SIMD3<Float>, up: SIMD3<Float>) -> Mat4 {
-    let z = simd_normalize(-dir)
-    let x = simd_normalize(simd_cross(up, z))
-    let y = simd_cross(z, x)
+    func dot(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float { a.x * b.x + a.y * b.y + a.z * b.z }
+    func cross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x)
+    }
+    func normalized(_ v: SIMD3<Float>) -> SIMD3<Float> {
+        let length = sqrt(dot(v, v))
+        return length > 0 ? v / length : .zero
+    }
+    let z = normalized(-dir)
+    let x = normalized(cross(up, z))
+    let y = cross(z, x)
     return Mat4(columns: (
         SIMD4<Float>(x.x, y.x, z.x, 0),
         SIMD4<Float>(x.y, y.y, z.y, 0),
         SIMD4<Float>(x.z, y.z, z.z, 0),
-        SIMD4<Float>(-simd_dot(x, eye), -simd_dot(y, eye), -simd_dot(z, eye), 1)
+        SIMD4<Float>(-dot(x, eye), -dot(y, eye), -dot(z, eye), 1)
     ))
 }
 
@@ -234,7 +294,7 @@ public struct Frustum {
         // Metal clip: -w ≤ x,y ≤ w and 0 ≤ z ≤ w → near plane is r2 alone
         let ps: [SIMD4<Float>] = [r3 + r0, r3 - r0, r3 + r1, r3 - r1, r2, r3 - r2]
         for (i, pl) in ps.enumerated() {
-            let len = simd_length(SIMD3<Float>(pl.x, pl.y, pl.z))
+            let len = sqrt(pl.x * pl.x + pl.y * pl.y + pl.z * pl.z)
             let n = len > 0 ? pl / len : pl
             planes[i * 4] = n.x
             planes[i * 4 + 1] = n.y

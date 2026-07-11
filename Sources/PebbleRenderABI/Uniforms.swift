@@ -45,6 +45,20 @@
     public static let stride = 192
 }
 
+/// Owned per-draw payload used by FramePacket chunk draws. Backends bind
+/// `shared` at buffer 1 and `origin` at vertex buffer 2.
+@frozen public struct ChunkDrawConstants: Sendable {
+    public var shared: ChunkSharedUniforms
+    public var origin: SIMD4<Float>
+
+    public init(shared: ChunkSharedUniforms, origin: SIMD4<Float>) {
+        self.shared = shared
+        self.origin = origin
+    }
+
+    public static let stride = ChunkSharedUniforms.stride + 16
+}
+
 /// ultra_fs post pass uniforms (buffer index 1) — mirrors `UltraU`
 /// (Shaders.swift:82-90) / `UltraUniforms` (WorldRenderer.swift:125-133).
 @frozen public struct UltraUniforms: Sendable {

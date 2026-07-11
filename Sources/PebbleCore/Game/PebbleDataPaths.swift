@@ -1,4 +1,5 @@
 import Foundation
+import PebbleCoreBase
 
 public enum PebbleDataPathError: Error, CustomStringConvertible {
     case missingDataRootInCI
@@ -81,22 +82,30 @@ public struct PebbleDataPaths: Sendable {
 public struct EngineServices {
     public let paths: PebbleDataPaths
     public let settingsStore: SettingsStore
-    public let db: SaveDB
+    public let db: any WorldStore
     public let socialStore: SocialStore
     public let nowMillis: () -> Double
+    public let monotonicClock: any MonotonicClock
     public let makeUUIDString: () -> String
     public let randomInt: (Int) -> Int
 
     public init(paths: PebbleDataPaths,
+                worldStore: (any WorldStore)? = nil,
                 nowMillis: @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
+                monotonicClock: any MonotonicClock = SystemMonotonicClock(),
                 makeUUIDString: @escaping () -> String = { UUID().uuidString },
                 randomInt: @escaping (Int) -> Int = { upperBound in Int.random(in: 0..<upperBound) }) {
         self.paths = paths
         self.nowMillis = nowMillis
+        self.monotonicClock = monotonicClock
         self.makeUUIDString = makeUUIDString
         self.randomInt = randomInt
         self.settingsStore = SettingsStore(paths: paths)
-        self.db = SaveDB(paths: paths)
+        if let worldStore {
+            self.db = worldStore
+        } else {
+            self.db = (try? DirectoryWorldStore(paths: paths)) ?? MemoryWorldStore()
+        }
         self.socialStore = SocialStore(paths: paths, clock: nowMillis)
     }
 

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "version": "1.1.0",
+  "versionSource": "Sources/PebbleCore/Game/Saves.swift:PEBBLE_VERSION",
+  "artifacts": {
+    "macos-arm64": "Pebble-macos-arm64-1.1.0.zip",
+    "windows-x64": "Pebble-windows-x64-1.1.0.zip"
+  },
+  "macos": {
+    "executable": "Pebble.app/Contents/MacOS/Pebble",
+    "resources": [
+      "AppIcon.icns",
+      "logo.png",
+      "title-bg.png",
+      "Faithful 32x - 1.20.1.zip",
+      "LICENSE",
+      "FAITHFUL-LICENSE.txt",
+      "THIRD-PARTY-NOTICES.txt"
+    ],
+    "frameworks": []
+  },
+  "windows": {
+    "executables": ["Pebble.exe", "pebserver.exe"],
+    "assets": ["logo.png", "title-bg.png", "Faithful 32x - 1.20.1.zip", "shaders/*.spv"],
+    "licenses": ["LICENSE", "FAITHFUL-LICENSE.txt", "THIRD-PARTY-NOTICES.txt"],
+    "nativeDependencies": ["SDL3.dll"],
+    "runtimeDependencies": ["Swift runtime DLLs", "ICU DLLs", "MSVC runtime"]
+  }
+}

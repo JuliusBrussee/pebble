@@ -3,9 +3,19 @@
 // vibrato and scheduled sub-sounds; positional stereo, underwater lowpass,
 // cave feedback-delay reverb, generative music and jukebox discs.
 
-import AVFoundation
 import Foundation
 import os
+import PebbleAudioCore
+import PebblePlatformNative
+
+private struct StridedAudioBuffer {
+    let base: UnsafeMutablePointer<Float>
+    let channel: Int
+    subscript(_ frame: Int) -> Float {
+        get { base[frame * 2 + channel] }
+        nonmutating set { base[frame * 2 + channel] = newValue }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // voices
@@ -44,8 +54,7 @@ private struct Voice {
 // engine
 // ---------------------------------------------------------------------------
 final class AudioEngineM {
-    private let engine = AVAudioEngine()
-    private var srcNode: AVAudioSourceNode!
+    private var outputDevice: NativeAudioDevice?
     private var sampleRate = 48000.0
     private var lock = os_unfair_lock()
     /// owned by the render thread after pickup — main thread only appends to
@@ -81,20 +90,28 @@ final class AudioEngineM {
     private var discUntil = 0.0
     private var inited = false
 
+    func start() { initEngine() }
+    func stop() {
+        outputDevice?.stop()
+        outputDevice = nil
+        inited = false
+    }
+    func setVolumes(_ values: [String: Double]) { applyVolumes(values) }
+
     func initEngine() {
         if inited { return }
         inited = true
         for i in 0..<noise.count { noise[i] = Float.random(in: -1...1) }
-        let format = engine.outputNode.outputFormat(forBus: 0)
-        sampleRate = format.sampleRate > 0 ? format.sampleRate : 48000
-        let renderFormat = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
-        srcNode = AVAudioSourceNode { [weak self] _, _, frameCount, audioBufferList -> OSStatus in
-            self?.render(frameCount, audioBufferList)
-            return noErr
+        sampleRate = 48000
+        outputDevice = try? NativeAudioDevice(sampleRate: UInt32(sampleRate), channels: 2, periodFrames: 512) {
+            [weak self] samples, frameCount, channels in
+            guard channels == 2 else {
+                for index in samples.indices { samples[index] = 0 }
+                return
+            }
+            self?.render(frameCount, samples)
         }
-        engine.attach(srcNode)
-        engine.connect(srcNode, to: engine.mainMixerNode, format: renderFormat)
-        try? engine.start()
+        try? outputDevice?.start()
         applyVolumes(volumes)
     }
 
@@ -321,12 +338,11 @@ final class AudioEngineM {
     }
 
     // ---- render ---------------------------------------------------------------
-    private func render(_ frameCount: AVAudioFrameCount, _ abl: UnsafeMutablePointer<AudioBufferList>) {
-        let buffers = UnsafeMutableAudioBufferListPointer(abl)
-        guard buffers.count >= 2,
-              let outL = buffers[0].mData?.assumingMemoryBound(to: Float.self),
-              let outR = buffers[1].mData?.assumingMemoryBound(to: Float.self) else { return }
-        let n = Int(frameCount)
+    private func render(_ frameCount: Int, _ samples: UnsafeMutableBufferPointer<Float>) {
+        guard samples.count >= frameCount * 2, let base = samples.baseAddress else { return }
+        let outL = StridedAudioBuffer(base: base, channel: 0)
+        let outR = StridedAudioBuffer(base: base, channel: 1)
+        let n = frameCount
         let dt = 1.0 / sampleRate
 
         os_unfair_lock_lock(&lock)
@@ -499,6 +515,8 @@ final class AudioEngineM {
         os_unfair_lock_unlock(&lock)
     }
 }
+
+extension AudioEngineM: AudioService {}
 
 // ---------------------------------------------------------------------------
 // recipes — the full sound-effect registry

@@ -128,6 +128,8 @@ public struct DrawItem: Hashable, Sendable, Comparable {
     public var sortKey: DrawSortKey
     public var pipeline: PipelineID
     public var meshHandle: MeshHandle
+    /// vertex range for non-indexed draws; empty for indexed draws.
+    public var vertexRange: Range<UInt32>
     /// index range within the mesh's index buffer; empty for non-indexed draws
     public var indexRange: Range<UInt32>
     /// instance range for instanced draws (e.g. particles); 0..<1 for a single draw
@@ -139,9 +141,11 @@ public struct DrawItem: Hashable, Sendable, Comparable {
     public var pushConstants: [UInt8]
 
     public init(sortKey: DrawSortKey, pipeline: PipelineID, meshHandle: MeshHandle,
+                vertexRange: Range<UInt32> = 0..<0,
                 indexRange: Range<UInt32>, instanceRange: Range<UInt32>,
                 textureBindings: [TextureBinding], pushConstants: [UInt8]) {
         self.sortKey = sortKey; self.pipeline = pipeline; self.meshHandle = meshHandle
+        self.vertexRange = vertexRange
         self.indexRange = indexRange; self.instanceRange = instanceRange
         self.textureBindings = textureBindings; self.pushConstants = pushConstants
     }

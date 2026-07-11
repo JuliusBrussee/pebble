@@ -7,6 +7,7 @@ import Metal
 import MetalKit
 import simd
 import PebbleCore
+import PebbleRenderABI
 
 struct SectionKey: Hashable {
     let cx: Int, sy: Int, cz: Int
@@ -27,6 +28,9 @@ final class SectionGPU {
     var opaque: MeshBlock?
     var cutout: MeshBlock?
     var translucent: MeshBlock?
+    var opaqueHandle: MeshHandle?
+    var cutoutHandle: MeshHandle?
+    var translucentHandle: MeshHandle?
 
     init(key: SectionKey, minY: Int) {
         self.key = key
@@ -257,6 +261,8 @@ final class WorldRenderer {
     private var shadowSizeNow = 0   // rebuilt when the ultra preset changes it
 
     var sections: [SectionKey: SectionGPU] = [:]
+    private var packetMeshes: [MeshHandle: MeshBlock] = [:]
+    private var nextPacketMeshHandle: UInt32 = 1
     var arena: MeshArena!
     var drawCalls = 0
 
@@ -720,6 +726,18 @@ final class WorldRenderer {
         arena.release(gpu.opaque)
         arena.release(gpu.cutout)
         arena.release(gpu.translucent)
+        if let handle = gpu.opaqueHandle { packetMeshes.removeValue(forKey: handle) }
+        if let handle = gpu.cutoutHandle { packetMeshes.removeValue(forKey: handle) }
+        if let handle = gpu.translucentHandle { packetMeshes.removeValue(forKey: handle) }
+    }
+
+    private func registerPacketMesh(_ block: MeshBlock?) -> MeshHandle? {
+        guard let block else { return nil }
+        let handle = MeshHandle(raw: nextPacketMeshHandle)
+        nextPacketMeshHandle &+= 1
+        if nextPacketMeshHandle == 0 { nextPacketMeshHandle = 1 }
+        packetMeshes[handle] = block
+        return handle
     }
 
     func uploadMesh(_ cx: Int, _ sy: Int, _ cz: Int, _ minY: Int, _ mesh: MeshOutput) {
@@ -740,6 +758,9 @@ final class WorldRenderer {
         gpu.opaque = make(mesh.opaque)
         gpu.cutout = make(mesh.cutout)
         gpu.translucent = make(mesh.translucent)
+        gpu.opaqueHandle = registerPacketMesh(gpu.opaque)
+        gpu.cutoutHandle = registerPacketMesh(gpu.cutout)
+        gpu.translucentHandle = registerPacketMesh(gpu.translucent)
         if gpu.opaque == nil && gpu.cutout == nil && gpu.translucent == nil { return }
         sections[key] = gpu
     }
@@ -753,6 +774,96 @@ final class WorldRenderer {
     func clearAllSections() {
         for gpu in sections.values { releaseSection(gpu) }
         sections.removeAll()
+    }
+
+    private func abiMatrix(_ matrix: simd_float4x4) -> ABIMat4 {
+        ABIMat4(c0: matrix.columns.0, c1: matrix.columns.1,
+                c2: matrix.columns.2, c3: matrix.columns.3)
+    }
+
+    private func makeChunkFramePacket(viewProj: simd_float4x4,
+                                      shadowMat: simd_float4x4,
+                                      uniforms: ChunkSharedU,
+                                      visible: [(gpu: SectionGPU, rel: SIMD3<Float>, dist: Float)]) -> FramePacket {
+        let camera = CameraState(viewProj: abiMatrix(viewProj), invViewProj: abiMatrix(viewProj.inverse),
+                                 shadowMat: abiMatrix(shadowMat))
+        let frameUniforms = FrameUniforms(
+            time: uniforms.misc.x,
+            dayLight: uniforms.light.x,
+            gamma: uniforms.light.y,
+            ambient: uniforms.light.z,
+            fogStart: uniforms.fog.x,
+            fogEnd: uniforms.fog.y,
+            fogColor: uniforms.fogColor,
+            sunDir: .zero,
+            shadowsOn: uniforms.light.w > 0,
+            ultraOn: uniforms.misc.z > 0
+        )
+        var builder = FrameBuilder(camera: camera, uniforms: frameUniforms)
+
+        func constants(_ fog: SIMD4<Float>, _ origin: SIMD3<Float>) -> [UInt8] {
+            let shared = ChunkSharedUniforms(
+                viewProj: abiMatrix(viewProj), shadowMat: abiMatrix(shadowMat),
+                light: uniforms.light, fog: fog, fogColor: uniforms.fogColor, misc: uniforms.misc)
+            return RenderBytes.copy(ChunkDrawConstants(shared: shared, origin: SIMD4<Float>(origin, 0)))
+        }
+
+        for item in visible {
+            let opaqueDepth = FrameBuilder.opaqueDepthBucket(distanceSquared: item.dist)
+            if let handle = item.gpu.opaqueHandle, let block = item.gpu.opaque {
+                builder.addDraw(pass: .world, pipeline: .opaque, mesh: handle,
+                                depthBucket: opaqueDepth, indexRange: 0..<UInt32(block.indexCount),
+                                pushConstants: constants(SIMD4<Float>(uniforms.fog.x, uniforms.fog.y, 0, 1), item.rel))
+            }
+            if let handle = item.gpu.cutoutHandle, let block = item.gpu.cutout {
+                builder.addDraw(pass: .world, pipeline: .cutout, mesh: handle,
+                                depthBucket: opaqueDepth, indexRange: 0..<UInt32(block.indexCount),
+                                pushConstants: constants(SIMD4<Float>(uniforms.fog.x, uniforms.fog.y, 0.35, 1), item.rel))
+            }
+            if let handle = item.gpu.translucentHandle, let block = item.gpu.translucent {
+                builder.addDraw(pass: .world, pipeline: .translucent, mesh: handle,
+                                depthBucket: FrameBuilder.translucentDepthBucket(distanceSquared: item.dist),
+                                indexRange: 0..<UInt32(block.indexCount),
+                                pushConstants: constants(SIMD4<Float>(uniforms.fog.x, uniforms.fog.y, 0, 0.82), item.rel))
+            }
+        }
+        return builder.finish(includeEmptyPasses: false)
+    }
+
+    private func drawChunkPacket(_ packet: FramePacket,
+                                 pipelines allowed: Set<PipelineID>,
+                                 encoder: MTLRenderCommandEncoder) {
+        var boundPage = -1
+        for pass in packet.passes where pass.kind == .world {
+            for draw in pass.draws where allowed.contains(draw.pipeline) {
+                guard let block = packetMeshes[draw.meshHandle],
+                      draw.pushConstants.count >= ChunkDrawConstants.stride else { continue }
+                switch draw.pipeline {
+                case .opaque: encoder.setRenderPipelineState(opaquePipeline)
+                case .cutout: encoder.setRenderPipelineState(cutoutPipeline)
+                case .translucent: encoder.setRenderPipelineState(translucentPipeline)
+                default: continue
+                }
+                encoder.setCullMode(.back)
+                draw.pushConstants.withUnsafeBytes { bytes in
+                    encoder.setVertexBytes(bytes.baseAddress!, length: ChunkSharedUniforms.stride, index: 1)
+                    encoder.setFragmentBytes(bytes.baseAddress!, length: ChunkSharedUniforms.stride, index: 1)
+                    encoder.setVertexBytes(bytes.baseAddress!.advanced(by: ChunkSharedUniforms.stride), length: 16, index: 2)
+                }
+                if block.page != boundPage {
+                    boundPage = block.page
+                    encoder.setVertexBuffer(arena.pages[block.page], offset: block.offset, index: 0)
+                } else {
+                    encoder.setVertexBufferOffset(block.offset, index: 0)
+                }
+                encoder.drawIndexedPrimitives(type: .triangle,
+                                              indexCount: Int(draw.indexRange.count),
+                                              indexType: .uint32,
+                                              indexBuffer: arena.pages[block.page],
+                                              indexBufferOffset: block.offset + block.ibRel)
+                drawCalls += 1
+            }
+        }
     }
 
     // ---- sky colors -------------------------------------------------------------
@@ -1001,40 +1112,16 @@ final class WorldRenderer {
         }
         visible.sort { $0.dist < $1.dist }
 
-        func drawLayer(_ pipeline: MTLRenderPipelineState,
-                       _ pick: (SectionGPU) -> MeshBlock?,
-                       _ list: [(gpu: SectionGPU, rel: SIMD3<Float>, dist: Float)],
-                       cull: Bool) {
-            enc.setRenderPipelineState(pipeline)
-            enc.setCullMode(cull ? .back : .none)
-            enc.setVertexBytes(&uni, length: MemoryLayout<ChunkSharedU>.stride, index: 1)
-            enc.setFragmentBytes(&uni, length: MemoryLayout<ChunkSharedU>.stride, index: 1)
-            var boundPage = -1
-            for v in list {
-                guard let buf = pick(v.gpu) else { continue }
-                var origin = SIMD4<Float>(v.rel, 0)
-                enc.setVertexBytes(&origin, length: 16, index: 2)
-                if buf.page != boundPage {
-                    boundPage = buf.page
-                    enc.setVertexBuffer(arena.pages[buf.page], offset: buf.offset, index: 0)
-                } else {
-                    enc.setVertexBufferOffset(buf.offset, index: 0)
-                }
-                enc.drawIndexedPrimitives(type: .triangle, indexCount: buf.indexCount, indexType: .uint32,
-                                          indexBuffer: arena.pages[buf.page], indexBufferOffset: buf.offset + buf.ibRel)
-                drawCalls += 1
-            }
-        }
+        let chunkPacket = makeChunkFramePacket(viewProj: viewProj, shadowMat: shadowMat,
+                                               uniforms: uni, visible: visible)
 
         // opaque front-to-back
         uni.fog.z = 0
         uni.fog.w = 1
-        drawLayer(opaquePipeline, { $0.opaque }, visible, cull: true)
+        drawChunkPacket(chunkPacket, pipelines: [.opaque, .cutout], encoder: enc)
         // cutout: alpha test, back-cull — the mesher emits explicit two-sided
         // pairs for crosses/vines, and culling kills the coincident interior
         // leaf faces that z-fight (sway-displaced) when both rasterize
-        uni.fog.z = 0.35
-        drawLayer(cutoutPipeline, { $0.cutout }, visible, cull: true)
         enc.setCullMode(.back)
 
         // entities + sprites + cubes + crack + selection + particles
@@ -1059,7 +1146,7 @@ final class WorldRenderer {
         uni.fog.w = 0.82
         enc.setFragmentTexture(atlasTexture, index: 0)
         enc.setFragmentSamplerState(atlasSampler, index: 0)
-        drawLayer(translucentPipeline, { $0.translucent }, visible.reversed(), cull: true)
+        drawChunkPacket(chunkPacket, pipelines: [.translucent], encoder: enc)
         uni.fog.w = 1
 
         // clouds
