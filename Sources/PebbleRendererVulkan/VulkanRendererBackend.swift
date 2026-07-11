@@ -67,6 +67,14 @@ private final class VulkanChunkFrameRenderer: @unchecked Sendable {
         guard status == PB_VULKAN_OK else { throw error(status) }
     }
 
+    func installEntityShadows(vertexSPIRV: Data) throws {
+        let status = vertexSPIRV.withUnsafeBytes { vertex in
+            pb_vulkan_chunk_renderer_install_entity_shadows(
+                handle, vertex.bindMemory(to: UInt8.self).baseAddress, vertex.count)
+        }
+        guard status == PB_VULKAN_OK else { throw error(status) }
+    }
+
     func installParticles(vertexSPIRV: Data, fragmentSPIRV: Data) throws {
         let status = vertexSPIRV.withUnsafeBytes { vertex in
             fragmentSPIRV.withUnsafeBytes { fragment in
@@ -183,6 +191,8 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
         let entityVertex = try Data(contentsOf: shaderDirectory.appendingPathComponent("entity.vert.spv"))
         let entityFragment = try Data(contentsOf: shaderDirectory.appendingPathComponent("entity.frag.spv"))
         try chunkRenderer.installEntities(vertexSPIRV: entityVertex, fragmentSPIRV: entityFragment)
+        let entityShadowVertex = try Data(contentsOf: shaderDirectory.appendingPathComponent("entity_shadow.vert.spv"))
+        try chunkRenderer.installEntityShadows(vertexSPIRV: entityShadowVertex)
         let particleVertex = try Data(contentsOf: shaderDirectory.appendingPathComponent("particle.vert.spv"))
         let particleFragment = try Data(contentsOf: shaderDirectory.appendingPathComponent("particle.frag.spv"))
         try chunkRenderer.installParticles(vertexSPIRV: particleVertex, fragmentSPIRV: particleFragment)
@@ -359,7 +369,8 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
             fog: SIMD4<Float>(frame.uniforms.fogStart, frame.uniforms.fogEnd, 0, 1),
             fogColor: frame.uniforms.fogColor,
             misc: SIMD4<Float>(frame.uniforms.time, 0, frame.uniforms.ultraOn ? 1 : 0, 0)))
-        let entityFrame = RenderBytes.copy(frame.camera.viewProj)
+        var entityFrame = RenderBytes.copy(frame.camera.viewProj)
+        entityFrame.append(contentsOf: RenderBytes.copy(frame.camera.shadowMat))
         let result = try chunkRenderer.present(sharedUniforms: shared, draws: rawDraws,
                                                entityViewProjection: entityFrame,
                                                entityDraws: rawEntities, particleDraws: rawParticles,

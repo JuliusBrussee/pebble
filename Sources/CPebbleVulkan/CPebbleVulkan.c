@@ -109,6 +109,7 @@ struct PBVulkanChunkRenderer {
     VkDescriptorSetLayout entity_descriptor_layout;
     VkPipelineLayout entity_pipeline_layout;
     VkPipeline entity_pipelines[2];
+    VkPipeline entity_shadow_pipeline;
     VkDescriptorPool entity_descriptor_pool;
     VkBuffer entity_frame_buffer;
     VkDeviceMemory entity_frame_memory;
@@ -118,6 +119,8 @@ struct PBVulkanChunkRenderer {
     size_t entity_vertex_spirv_size;
     uint8_t *entity_fragment_spirv;
     size_t entity_fragment_spirv_size;
+    uint8_t *entity_shadow_vertex_spirv;
+    size_t entity_shadow_vertex_spirv_size;
     VkPipelineLayout particle_pipeline_layout;
     VkPipeline particle_pipeline;
     uint8_t *particle_vertex_spirv;
@@ -832,6 +835,10 @@ static void pbvk_entity_pipeline_release(PBVulkanChunkRenderer *renderer) {
             renderer->entity_pipelines[index] = VK_NULL_HANDLE;
         }
     }
+    if (renderer->entity_shadow_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer->swapchain->context->device, renderer->entity_shadow_pipeline, NULL);
+        renderer->entity_shadow_pipeline = VK_NULL_HANDLE;
+    }
 }
 
 static PBVulkanStatus pbvk_entity_pipeline_build(PBVulkanChunkRenderer *renderer) {
@@ -907,6 +914,51 @@ static PBVulkanStatus pbvk_entity_pipeline_build(PBVulkanChunkRenderer *renderer
     vkDestroyShaderModule(context->device, fragment, NULL);
     return result == VK_SUCCESS ? PB_VULKAN_OK
         : pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity graphics pipeline creation failed", result);
+}
+
+static PBVulkanStatus pbvk_entity_shadow_pipeline_build(PBVulkanChunkRenderer *renderer) {
+    if (renderer->entity_shadow_vertex_spirv == NULL || renderer->shadow_render_pass == VK_NULL_HANDLE) return PB_VULKAN_OK;
+    PBVulkanContext *context = renderer->swapchain->context;
+    VkShaderModule vertex = pbvk_shader_module(context, renderer->entity_shadow_vertex_spirv,
+                                                renderer->entity_shadow_vertex_spirv_size);
+    if (vertex == VK_NULL_HANDLE) return pbvk_fail(PB_VULKAN_RENDER_FAILED,
+                                                   "entity shadow shader creation failed", VK_ERROR_UNKNOWN);
+    VkPipelineShaderStageCreateInfo stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
+    stage.stage = VK_SHADER_STAGE_VERTEX_BIT; stage.module = vertex; stage.pName = "main";
+    VkVertexInputBindingDescription binding = {0, 36, VK_VERTEX_INPUT_RATE_VERTEX};
+    VkVertexInputAttributeDescription attributes[2] = {
+        {0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0}, {3, 0, VK_FORMAT_R32_SFLOAT, 32}
+    };
+    VkPipelineVertexInputStateCreateInfo vertex_input = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertex_input.vertexBindingDescriptionCount = 1; vertex_input.pVertexBindingDescriptions = &binding;
+    vertex_input.vertexAttributeDescriptionCount = 2; vertex_input.pVertexAttributeDescriptions = attributes;
+    VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewport.viewportCount = 1; viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_BACK_BIT;
+    raster.frontFace = VK_FRONT_FACE_CLOCKWISE; raster.depthBiasEnable = VK_TRUE; raster.lineWidth = 1;
+    VkPipelineMultisampleStateCreateInfo multisample = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depth = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth.depthTestEnable = VK_TRUE; depth.depthWriteEnable = VK_TRUE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkDynamicState states[3] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_DEPTH_BIAS};
+    VkPipelineDynamicStateCreateInfo dynamic = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic.dynamicStateCount = 3; dynamic.pDynamicStates = states;
+    VkGraphicsPipelineCreateInfo pipeline = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipeline.stageCount = 1; pipeline.pStages = &stage;
+    pipeline.pVertexInputState = &vertex_input; pipeline.pInputAssemblyState = &assembly;
+    pipeline.pViewportState = &viewport; pipeline.pRasterizationState = &raster;
+    pipeline.pMultisampleState = &multisample; pipeline.pDepthStencilState = &depth;
+    pipeline.pDynamicState = &dynamic; pipeline.layout = renderer->entity_pipeline_layout;
+    pipeline.renderPass = renderer->shadow_render_pass;
+    VkResult result = vkCreateGraphicsPipelines(context->device, VK_NULL_HANDLE, 1, &pipeline, NULL,
+                                                 &renderer->entity_shadow_pipeline);
+    vkDestroyShaderModule(context->device, vertex, NULL);
+    return result == VK_SUCCESS ? PB_VULKAN_OK
+        : pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity shadow pipeline creation failed", result);
 }
 
 static void pbvk_particle_pipeline_release(PBVulkanChunkRenderer *renderer) {
@@ -1443,6 +1495,7 @@ PBVulkanStatus pb_vulkan_chunk_renderer_rebuild(PBVulkanChunkRenderer *renderer)
     PBVulkanStatus status = pbvk_chunk_pipelines_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_ui_pipeline_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_entity_pipeline_build(renderer);
+    if (status == PB_VULKAN_OK) status = pbvk_entity_shadow_pipeline_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_particle_pipeline_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_composite_pipeline_build(renderer);
     return status == PB_VULKAN_OK ? pbvk_sky_pipeline_build(renderer) : status;
@@ -1534,23 +1587,34 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_entities(PBVulkanChunkRenderer *
     layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
     if (result == VK_SUCCESS) result = vkCreatePipelineLayout(context->device, &layout, NULL,
                                                                &renderer->entity_pipeline_layout);
-    if (result == VK_SUCCESS) result = pbvk_buffer_create(context, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+    if (result == VK_SUCCESS) result = pbvk_buffer_create(context, 128, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         &renderer->entity_frame_buffer, &renderer->entity_frame_memory);
     if (result == VK_SUCCESS) result = pbvk_buffer_create(context, 4096u * 1536u, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         &renderer->entity_parts_buffer, &renderer->entity_parts_memory);
     VkDescriptorPoolSize sizes[2] = {
-        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8192},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8192},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 16384},
     };
     VkDescriptorPoolCreateInfo pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    pool.maxSets = 4096; pool.poolSizeCount = 2; pool.pPoolSizes = sizes;
+    pool.maxSets = 8192; pool.poolSizeCount = 2; pool.pPoolSizes = sizes;
     if (result == VK_SUCCESS) result = vkCreateDescriptorPool(context->device, &pool, NULL,
                                                                &renderer->entity_descriptor_pool);
     if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity descriptor resources failed", result);
     return pbvk_entity_pipeline_build(renderer);
+}
+
+PBVulkanStatus pb_vulkan_chunk_renderer_install_entity_shadows(PBVulkanChunkRenderer *renderer,
+                                                               const uint8_t *vertex_spirv,
+                                                               size_t vertex_spirv_size) {
+    if (renderer == NULL || vertex_spirv == NULL || vertex_spirv_size == 0) return PB_VULKAN_BAD_ARGUMENT;
+    renderer->entity_shadow_vertex_spirv = (uint8_t *)malloc(vertex_spirv_size);
+    if (renderer->entity_shadow_vertex_spirv == NULL) return PB_VULKAN_OUT_OF_MEMORY;
+    memcpy(renderer->entity_shadow_vertex_spirv, vertex_spirv, vertex_spirv_size);
+    renderer->entity_shadow_vertex_spirv_size = vertex_spirv_size;
+    return pbvk_entity_shadow_pipeline_build(renderer);
 }
 
 PBVulkanStatus pb_vulkan_chunk_renderer_install_particles(PBVulkanChunkRenderer *renderer,
@@ -1684,7 +1748,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     if (renderer == NULL || shared_uniforms == NULL || shared_uniform_size != 192 ||
         (draw_count > 0 && draws == NULL) || (ui_draw_count > 0 && ui_draws == NULL) ||
         (entity_draw_count > 0 && (entity_draws == NULL || entity_view_projection == NULL ||
-                                   entity_view_projection_size != 64 || entity_draw_count > 4096 ||
+                                   entity_view_projection_size != 128 || entity_draw_count > 4096 ||
                                    renderer->entity_pipelines[0] == VK_NULL_HANDLE)) ||
         (particle_draw_count > 0 && (particle_draws == NULL || renderer->particle_pipeline == VK_NULL_HANDLE)) ||
         renderer->composite_pipeline == VK_NULL_HANDLE ||
@@ -1698,7 +1762,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     VkResult result = pbvk_memory_write(context, renderer->uniform_memory, shared_uniforms, 192);
     if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "chunk uniform upload failed", result);
     if (entity_draw_count > 0) {
-        result = pbvk_memory_write(context, renderer->entity_frame_memory, entity_view_projection, 64);
+        result = pbvk_memory_write(context, renderer->entity_frame_memory, entity_view_projection, 128);
         if (result == VK_SUCCESS) result = vkResetDescriptorPool(context->device,
                                                                  renderer->entity_descriptor_pool, 0);
         for (uint32_t index = 0; result == VK_SUCCESS && index < entity_draw_count; index++) {
@@ -1754,6 +1818,40 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
             vkCmdBindIndexBuffer(command, draw->mesh->index_buffer, 0,
                                  draw->mesh->index_stride == 2 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(command, draw->index_count, 1, draw->first_index, draw->vertex_offset, 0);
+        }
+        if (renderer->entity_shadow_pipeline != VK_NULL_HANDLE) {
+            vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->entity_shadow_pipeline);
+            for (uint32_t index = 0; index < entity_draw_count; index++) {
+                const PBVulkanEntityDraw *draw = &entity_draws[index];
+                if (draw->depth_mode != 0 || draw->mesh == NULL || draw->vertex_count == 0) continue;
+                VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+                VkDescriptorSetAllocateInfo allocation = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+                allocation.descriptorPool = renderer->entity_descriptor_pool;
+                allocation.descriptorSetCount = 1;
+                allocation.pSetLayouts = &renderer->entity_descriptor_layout;
+                result = vkAllocateDescriptorSets(context->device, &allocation, &descriptor_set);
+                if (result != VK_SUCCESS) break;
+                VkDescriptorBufferInfo frame = {renderer->entity_frame_buffer, 0, 128};
+                VkDescriptorBufferInfo parts = {renderer->entity_parts_buffer, (VkDeviceSize)index * 1536u, 1536};
+                VkWriteDescriptorSet writes[2]; memset(writes, 0, sizeof(writes));
+                writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[0].dstSet = descriptor_set; writes[0].dstBinding = 1;
+                writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                writes[0].pBufferInfo = &frame;
+                writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[1].dstSet = descriptor_set; writes[1].dstBinding = 2;
+                writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                writes[1].pBufferInfo = &parts;
+                vkUpdateDescriptorSets(context->device, 2, writes, 0, NULL);
+                vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->entity_pipeline_layout,
+                                        0, 1, &descriptor_set, 0, NULL);
+                vkCmdPushConstants(command, renderer->entity_pipeline_layout,
+                                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                   0, sizeof(draw->constants), draw->constants);
+                VkDeviceSize offset = 0;
+                vkCmdBindVertexBuffers(command, 0, 1, &draw->mesh->vertex_buffer, &offset);
+                vkCmdDraw(command, draw->vertex_count, 1, draw->first_vertex, 0);
+            }
         }
         vkCmdEndRenderPass(command);
     }
@@ -1829,7 +1927,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
             }
             VkDescriptorImageInfo image = {draw->texture->sampler, draw->texture->view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-            VkDescriptorBufferInfo frame = {renderer->entity_frame_buffer, 0, 64};
+            VkDescriptorBufferInfo frame = {renderer->entity_frame_buffer, 0, 128};
             VkDescriptorBufferInfo parts = {renderer->entity_parts_buffer, (VkDeviceSize)index * 1536u, 1536};
             VkWriteDescriptorSet writes[3];
             memset(writes, 0, sizeof(writes));
@@ -2073,6 +2171,7 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
     free(renderer->shadow_vertex_spirv);
     free(renderer->entity_vertex_spirv);
     free(renderer->entity_fragment_spirv);
+    free(renderer->entity_shadow_vertex_spirv);
     free(renderer->particle_vertex_spirv);
     free(renderer->particle_fragment_spirv);
     free(renderer->composite_vertex_spirv);

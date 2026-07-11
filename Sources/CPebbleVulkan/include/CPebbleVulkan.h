@@ -125,6 +125,9 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_shadow(PBVulkanChunkRenderer *re
 PBVulkanStatus pb_vulkan_chunk_renderer_install_entities(PBVulkanChunkRenderer *renderer,
                                                          const uint8_t *vertex_spirv, size_t vertex_spirv_size,
                                                          const uint8_t *fragment_spirv, size_t fragment_spirv_size);
+PBVulkanStatus pb_vulkan_chunk_renderer_install_entity_shadows(PBVulkanChunkRenderer *renderer,
+                                                               const uint8_t *vertex_spirv,
+                                                               size_t vertex_spirv_size);
 PBVulkanStatus pb_vulkan_chunk_renderer_install_particles(PBVulkanChunkRenderer *renderer,
                                                           const uint8_t *vertex_spirv, size_t vertex_spirv_size,
                                                           const uint8_t *fragment_spirv, size_t fragment_spirv_size);

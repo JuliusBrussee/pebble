@@ -100,6 +100,7 @@ foreach ($Relative in $Required) {
 }
 $RequiredShaders = @(
     "chunk.vert.spv", "chunk.frag.spv", "shadow.vert.spv", "entity.vert.spv", "entity.frag.spv",
+    "entity_shadow.vert.spv",
     "particle.vert.spv", "particle.frag.spv", "sky.vert.spv", "sky.frag.spv", "ui.vert.spv",
     "ui.frag.spv", "fullscreen.vert.spv", "composite.frag.spv"
 )
