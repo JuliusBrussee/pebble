@@ -34,6 +34,11 @@ struct PBVulkanSwapchain {
     VkImage *images;
     VkImageView *views;
     VkFramebuffer *framebuffers;
+    VkRenderPass present_render_pass;
+    VkImage scene_image;
+    VkDeviceMemory scene_memory;
+    VkImageView scene_view;
+    VkFramebuffer scene_framebuffer;
     VkImage depth_image;
     VkDeviceMemory depth_memory;
     VkImageView depth_view;
@@ -111,6 +116,22 @@ struct PBVulkanChunkRenderer {
     size_t entity_vertex_spirv_size;
     uint8_t *entity_fragment_spirv;
     size_t entity_fragment_spirv_size;
+    VkPipelineLayout particle_pipeline_layout;
+    VkPipeline particle_pipeline;
+    uint8_t *particle_vertex_spirv;
+    size_t particle_vertex_spirv_size;
+    uint8_t *particle_fragment_spirv;
+    size_t particle_fragment_spirv_size;
+    VkDescriptorSetLayout composite_descriptor_layout;
+    VkPipelineLayout composite_pipeline_layout;
+    VkPipeline composite_pipeline;
+    VkDescriptorPool composite_descriptor_pool;
+    VkDescriptorSet composite_descriptor_set;
+    VkSampler composite_sampler;
+    uint8_t *composite_vertex_spirv;
+    size_t composite_vertex_spirv_size;
+    uint8_t *composite_fragment_spirv;
+    size_t composite_fragment_spirv_size;
 };
 
 static PBVK_THREAD_LOCAL char pbvk_error[512];
@@ -863,6 +884,151 @@ static PBVulkanStatus pbvk_entity_pipeline_build(PBVulkanChunkRenderer *renderer
         : pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity graphics pipeline creation failed", result);
 }
 
+static void pbvk_particle_pipeline_release(PBVulkanChunkRenderer *renderer) {
+    if (renderer->particle_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer->swapchain->context->device, renderer->particle_pipeline, NULL);
+        renderer->particle_pipeline = VK_NULL_HANDLE;
+    }
+}
+
+static PBVulkanStatus pbvk_particle_pipeline_build(PBVulkanChunkRenderer *renderer) {
+    if (renderer->particle_vertex_spirv == NULL || renderer->particle_fragment_spirv == NULL) return PB_VULKAN_OK;
+    PBVulkanContext *context = renderer->swapchain->context;
+    VkShaderModule vertex = pbvk_shader_module(context, renderer->particle_vertex_spirv,
+                                                renderer->particle_vertex_spirv_size);
+    VkShaderModule fragment = pbvk_shader_module(context, renderer->particle_fragment_spirv,
+                                                  renderer->particle_fragment_spirv_size);
+    if (vertex == VK_NULL_HANDLE || fragment == VK_NULL_HANDLE) {
+        if (vertex != VK_NULL_HANDLE) vkDestroyShaderModule(context->device, vertex, NULL);
+        if (fragment != VK_NULL_HANDLE) vkDestroyShaderModule(context->device, fragment, NULL);
+        return pbvk_fail(PB_VULKAN_RENDER_FAILED, "particle shader module creation failed", VK_ERROR_UNKNOWN);
+    }
+    VkPipelineShaderStageCreateInfo stages[2]; memset(stages, 0, sizeof(stages));
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vertex; stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fragment; stages[1].pName = "main";
+    VkVertexInputBindingDescription bindings[2] = {
+        {0, 8, VK_VERTEX_INPUT_RATE_VERTEX}, {1, 48, VK_VERTEX_INPUT_RATE_INSTANCE}
+    };
+    VkVertexInputAttributeDescription attributes[5] = {
+        {0, 0, VK_FORMAT_R32G32_SFLOAT, 0},
+        {1, 1, VK_FORMAT_R32G32B32_SFLOAT, 0},
+        {2, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 12},
+        {3, 1, VK_FORMAT_R32_SFLOAT, 28},
+        {4, 1, VK_FORMAT_R32G32B32A32_SFLOAT, 32},
+    };
+    VkPipelineVertexInputStateCreateInfo vertex_input = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    vertex_input.vertexBindingDescriptionCount = 2; vertex_input.pVertexBindingDescriptions = bindings;
+    vertex_input.vertexAttributeDescriptionCount = 5; vertex_input.pVertexAttributeDescriptions = attributes;
+    VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewport.viewportCount = 1; viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
+    VkPipelineMultisampleStateCreateInfo multisample = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depth = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth.depthTestEnable = VK_TRUE; depth.depthWriteEnable = VK_FALSE;
+    depth.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    VkPipelineColorBlendAttachmentState attachment = {0};
+    attachment.blendEnable = VK_TRUE; attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; attachment.colorBlendOp = VK_BLEND_OP_ADD;
+    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA; attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    attachment.colorWriteMask = 0xf;
+    VkPipelineColorBlendStateCreateInfo blend = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1; blend.pAttachments = &attachment;
+    VkDynamicState states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic.dynamicStateCount = 2; dynamic.pDynamicStates = states;
+    VkGraphicsPipelineCreateInfo pipeline = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipeline.stageCount = 2; pipeline.pStages = stages;
+    pipeline.pVertexInputState = &vertex_input; pipeline.pInputAssemblyState = &assembly;
+    pipeline.pViewportState = &viewport; pipeline.pRasterizationState = &raster;
+    pipeline.pMultisampleState = &multisample; pipeline.pDepthStencilState = &depth;
+    pipeline.pColorBlendState = &blend; pipeline.pDynamicState = &dynamic;
+    pipeline.layout = renderer->particle_pipeline_layout; pipeline.renderPass = renderer->swapchain->render_pass;
+    VkResult result = vkCreateGraphicsPipelines(context->device, VK_NULL_HANDLE, 1, &pipeline, NULL,
+                                                 &renderer->particle_pipeline);
+    vkDestroyShaderModule(context->device, vertex, NULL); vkDestroyShaderModule(context->device, fragment, NULL);
+    return result == VK_SUCCESS ? PB_VULKAN_OK
+        : pbvk_fail(PB_VULKAN_RENDER_FAILED, "particle graphics pipeline creation failed", result);
+}
+
+static void pbvk_composite_pipeline_release(PBVulkanChunkRenderer *renderer) {
+    if (renderer->composite_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer->swapchain->context->device, renderer->composite_pipeline, NULL);
+        renderer->composite_pipeline = VK_NULL_HANDLE;
+    }
+}
+
+static void pbvk_composite_descriptor_update(PBVulkanChunkRenderer *renderer) {
+    if (renderer->composite_descriptor_set == VK_NULL_HANDLE || renderer->swapchain->scene_view == VK_NULL_HANDLE) return;
+    VkDescriptorImageInfo images[2] = {
+        {renderer->composite_sampler, renderer->swapchain->scene_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+        {renderer->composite_sampler, renderer->swapchain->scene_view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+    };
+    VkWriteDescriptorSet writes[2]; memset(writes, 0, sizeof(writes));
+    for (uint32_t index = 0; index < 2; index++) {
+        writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[index].dstSet = renderer->composite_descriptor_set;
+        writes[index].dstBinding = index;
+        writes[index].descriptorCount = 1;
+        writes[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[index].pImageInfo = &images[index];
+    }
+    vkUpdateDescriptorSets(renderer->swapchain->context->device, 2, writes, 0, NULL);
+}
+
+static PBVulkanStatus pbvk_composite_pipeline_build(PBVulkanChunkRenderer *renderer) {
+    if (renderer->composite_vertex_spirv == NULL || renderer->composite_fragment_spirv == NULL) return PB_VULKAN_OK;
+    PBVulkanContext *context = renderer->swapchain->context;
+    VkShaderModule vertex = pbvk_shader_module(context, renderer->composite_vertex_spirv,
+                                                renderer->composite_vertex_spirv_size);
+    VkShaderModule fragment = pbvk_shader_module(context, renderer->composite_fragment_spirv,
+                                                  renderer->composite_fragment_spirv_size);
+    if (vertex == VK_NULL_HANDLE || fragment == VK_NULL_HANDLE) {
+        if (vertex != VK_NULL_HANDLE) vkDestroyShaderModule(context->device, vertex, NULL);
+        if (fragment != VK_NULL_HANDLE) vkDestroyShaderModule(context->device, fragment, NULL);
+        return pbvk_fail(PB_VULKAN_RENDER_FAILED, "composite shader module creation failed", VK_ERROR_UNKNOWN);
+    }
+    VkPipelineShaderStageCreateInfo stages[2]; memset(stages, 0, sizeof(stages));
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vertex; stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fragment; stages[1].pName = "main";
+    VkPipelineVertexInputStateCreateInfo vertex_input = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewport.viewportCount = 1; viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
+    VkPipelineMultisampleStateCreateInfo multisample = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState attachment = {0}; attachment.colorWriteMask = 0xf;
+    VkPipelineColorBlendStateCreateInfo blend = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1; blend.pAttachments = &attachment;
+    VkDynamicState states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic.dynamicStateCount = 2; dynamic.pDynamicStates = states;
+    VkGraphicsPipelineCreateInfo pipeline = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipeline.stageCount = 2; pipeline.pStages = stages;
+    pipeline.pVertexInputState = &vertex_input; pipeline.pInputAssemblyState = &assembly;
+    pipeline.pViewportState = &viewport; pipeline.pRasterizationState = &raster;
+    pipeline.pMultisampleState = &multisample; pipeline.pColorBlendState = &blend;
+    pipeline.pDynamicState = &dynamic; pipeline.layout = renderer->composite_pipeline_layout;
+    pipeline.renderPass = renderer->swapchain->present_render_pass;
+    VkResult result = vkCreateGraphicsPipelines(context->device, VK_NULL_HANDLE, 1, &pipeline, NULL,
+                                                 &renderer->composite_pipeline);
+    vkDestroyShaderModule(context->device, vertex, NULL); vkDestroyShaderModule(context->device, fragment, NULL);
+    if (result == VK_SUCCESS) pbvk_composite_descriptor_update(renderer);
+    return result == VK_SUCCESS ? PB_VULKAN_OK
+        : pbvk_fail(PB_VULKAN_RENDER_FAILED, "composite graphics pipeline creation failed", result);
+}
+
 static void pbvk_shadow_release(PBVulkanChunkRenderer *renderer) {
     VkDevice device = renderer->swapchain->context->device;
     if (renderer->shadow_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, renderer->shadow_pipeline, NULL);
@@ -1192,8 +1358,14 @@ PBVulkanStatus pb_vulkan_chunk_renderer_rebuild(PBVulkanChunkRenderer *renderer)
     vkDeviceWaitIdle(renderer->swapchain->context->device);
     pbvk_chunk_pipelines_release(renderer);
     pbvk_ui_pipeline_release(renderer);
+    pbvk_entity_pipeline_release(renderer);
+    pbvk_particle_pipeline_release(renderer);
+    pbvk_composite_pipeline_release(renderer);
     PBVulkanStatus status = pbvk_chunk_pipelines_build(renderer);
-    return status == PB_VULKAN_OK ? pbvk_ui_pipeline_build(renderer) : status;
+    if (status == PB_VULKAN_OK) status = pbvk_ui_pipeline_build(renderer);
+    if (status == PB_VULKAN_OK) status = pbvk_entity_pipeline_build(renderer);
+    if (status == PB_VULKAN_OK) status = pbvk_particle_pipeline_build(renderer);
+    return status == PB_VULKAN_OK ? pbvk_composite_pipeline_build(renderer) : status;
 }
 
 PBVulkanStatus pb_vulkan_chunk_renderer_install_ui(PBVulkanChunkRenderer *renderer,
@@ -1246,6 +1418,137 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_shadow(PBVulkanChunkRenderer *re
     return pbvk_shadow_build(renderer);
 }
 
+PBVulkanStatus pb_vulkan_chunk_renderer_install_entities(PBVulkanChunkRenderer *renderer,
+                                                         const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                         const uint8_t *fragment_spirv, size_t fragment_spirv_size) {
+    if (renderer == NULL || vertex_spirv == NULL || fragment_spirv == NULL ||
+        vertex_spirv_size == 0 || fragment_spirv_size == 0) return PB_VULKAN_BAD_ARGUMENT;
+    PBVulkanContext *context = renderer->swapchain->context;
+    renderer->entity_vertex_spirv = (uint8_t *)malloc(vertex_spirv_size);
+    renderer->entity_fragment_spirv = (uint8_t *)malloc(fragment_spirv_size);
+    if (renderer->entity_vertex_spirv == NULL || renderer->entity_fragment_spirv == NULL) {
+        free(renderer->entity_vertex_spirv); renderer->entity_vertex_spirv = NULL;
+        free(renderer->entity_fragment_spirv); renderer->entity_fragment_spirv = NULL;
+        return PB_VULKAN_OUT_OF_MEMORY;
+    }
+    memcpy(renderer->entity_vertex_spirv, vertex_spirv, vertex_spirv_size);
+    memcpy(renderer->entity_fragment_spirv, fragment_spirv, fragment_spirv_size);
+    renderer->entity_vertex_spirv_size = vertex_spirv_size;
+    renderer->entity_fragment_spirv_size = fragment_spirv_size;
+
+    VkDescriptorSetLayoutBinding bindings[2];
+    memset(bindings, 0, sizeof(bindings));
+    bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1; bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[1].descriptorCount = 1; bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    VkDescriptorSetLayoutCreateInfo descriptor = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    descriptor.bindingCount = 2; descriptor.pBindings = bindings;
+    VkResult result = vkCreateDescriptorSetLayout(context->device, &descriptor, NULL,
+                                                   &renderer->entity_descriptor_layout);
+    VkPushConstantRange push = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128};
+    VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.setLayoutCount = 1; layout.pSetLayouts = &renderer->entity_descriptor_layout;
+    layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
+    if (result == VK_SUCCESS) result = vkCreatePipelineLayout(context->device, &layout, NULL,
+                                                               &renderer->entity_pipeline_layout);
+    if (result == VK_SUCCESS) result = pbvk_buffer_create(context, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        &renderer->entity_frame_buffer, &renderer->entity_frame_memory);
+    VkDescriptorPoolSize sizes[2] = {
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096},
+    };
+    VkDescriptorPoolCreateInfo pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    pool.maxSets = 4096; pool.poolSizeCount = 2; pool.pPoolSizes = sizes;
+    if (result == VK_SUCCESS) result = vkCreateDescriptorPool(context->device, &pool, NULL,
+                                                               &renderer->entity_descriptor_pool);
+    if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity descriptor resources failed", result);
+    return pbvk_entity_pipeline_build(renderer);
+}
+
+PBVulkanStatus pb_vulkan_chunk_renderer_install_particles(PBVulkanChunkRenderer *renderer,
+                                                          const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                          const uint8_t *fragment_spirv, size_t fragment_spirv_size) {
+    if (renderer == NULL || vertex_spirv == NULL || fragment_spirv == NULL ||
+        vertex_spirv_size == 0 || fragment_spirv_size == 0) return PB_VULKAN_BAD_ARGUMENT;
+    renderer->particle_vertex_spirv = (uint8_t *)malloc(vertex_spirv_size);
+    renderer->particle_fragment_spirv = (uint8_t *)malloc(fragment_spirv_size);
+    if (renderer->particle_vertex_spirv == NULL || renderer->particle_fragment_spirv == NULL) {
+        free(renderer->particle_vertex_spirv); renderer->particle_vertex_spirv = NULL;
+        free(renderer->particle_fragment_spirv); renderer->particle_fragment_spirv = NULL;
+        return PB_VULKAN_OUT_OF_MEMORY;
+    }
+    memcpy(renderer->particle_vertex_spirv, vertex_spirv, vertex_spirv_size);
+    memcpy(renderer->particle_fragment_spirv, fragment_spirv, fragment_spirv_size);
+    renderer->particle_vertex_spirv_size = vertex_spirv_size;
+    renderer->particle_fragment_spirv_size = fragment_spirv_size;
+    VkPushConstantRange push = {VK_SHADER_STAGE_VERTEX_BIT, 0, 96};
+    VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.setLayoutCount = 1; layout.pSetLayouts = &renderer->descriptor_layout;
+    layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
+    VkResult result = vkCreatePipelineLayout(renderer->swapchain->context->device, &layout, NULL,
+                                              &renderer->particle_pipeline_layout);
+    if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "particle pipeline layout failed", result);
+    return pbvk_particle_pipeline_build(renderer);
+}
+
+PBVulkanStatus pb_vulkan_chunk_renderer_install_postprocess(PBVulkanChunkRenderer *renderer,
+                                                            const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                            const uint8_t *fragment_spirv, size_t fragment_spirv_size) {
+    if (renderer == NULL || vertex_spirv == NULL || fragment_spirv == NULL ||
+        vertex_spirv_size == 0 || fragment_spirv_size == 0) return PB_VULKAN_BAD_ARGUMENT;
+    PBVulkanContext *context = renderer->swapchain->context;
+    renderer->composite_vertex_spirv = (uint8_t *)malloc(vertex_spirv_size);
+    renderer->composite_fragment_spirv = (uint8_t *)malloc(fragment_spirv_size);
+    if (renderer->composite_vertex_spirv == NULL || renderer->composite_fragment_spirv == NULL) {
+        free(renderer->composite_vertex_spirv); renderer->composite_vertex_spirv = NULL;
+        free(renderer->composite_fragment_spirv); renderer->composite_fragment_spirv = NULL;
+        return PB_VULKAN_OUT_OF_MEMORY;
+    }
+    memcpy(renderer->composite_vertex_spirv, vertex_spirv, vertex_spirv_size);
+    memcpy(renderer->composite_fragment_spirv, fragment_spirv, fragment_spirv_size);
+    renderer->composite_vertex_spirv_size = vertex_spirv_size;
+    renderer->composite_fragment_spirv_size = fragment_spirv_size;
+    VkDescriptorSetLayoutBinding bindings[2]; memset(bindings, 0, sizeof(bindings));
+    for (uint32_t index = 0; index < 2; index++) {
+        bindings[index].binding = index;
+        bindings[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[index].descriptorCount = 1;
+        bindings[index].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo descriptor = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    descriptor.bindingCount = 2; descriptor.pBindings = bindings;
+    VkResult result = vkCreateDescriptorSetLayout(context->device, &descriptor, NULL,
+                                                   &renderer->composite_descriptor_layout);
+    VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.setLayoutCount = 1; layout.pSetLayouts = &renderer->composite_descriptor_layout;
+    if (result == VK_SUCCESS) result = vkCreatePipelineLayout(context->device, &layout, NULL,
+                                                               &renderer->composite_pipeline_layout);
+    VkDescriptorPoolSize pool_size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+    VkDescriptorPoolCreateInfo pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pool.maxSets = 1; pool.poolSizeCount = 1; pool.pPoolSizes = &pool_size;
+    if (result == VK_SUCCESS) result = vkCreateDescriptorPool(context->device, &pool, NULL,
+                                                               &renderer->composite_descriptor_pool);
+    VkDescriptorSetAllocateInfo set = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    set.descriptorPool = renderer->composite_descriptor_pool; set.descriptorSetCount = 1;
+    set.pSetLayouts = &renderer->composite_descriptor_layout;
+    if (result == VK_SUCCESS) result = vkAllocateDescriptorSets(context->device, &set,
+                                                                 &renderer->composite_descriptor_set);
+    VkSamplerCreateInfo sampler = {VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+    sampler.magFilter = VK_FILTER_LINEAR; sampler.minFilter = VK_FILTER_LINEAR;
+    sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    sampler.maxLod = 0;
+    if (result == VK_SUCCESS) result = vkCreateSampler(context->device, &sampler, NULL,
+                                                        &renderer->composite_sampler);
+    if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "composite resources failed", result);
+    return pbvk_composite_pipeline_build(renderer);
+}
+
 PBVulkanStatus pb_vulkan_chunk_renderer_set_ui_texture(PBVulkanChunkRenderer *renderer,
                                                        PBVulkanTexture *texture) {
     if (renderer == NULL || texture == NULL || renderer->ui_descriptor_set == VK_NULL_HANDLE) return PB_VULKAN_BAD_ARGUMENT;
@@ -1259,22 +1562,35 @@ PBVulkanStatus pb_vulkan_chunk_renderer_set_ui_texture(PBVulkanChunkRenderer *re
     return PB_VULKAN_OK;
 }
 
-PBVulkanStatus pb_vulkan_renderer_present_frame(PBVulkanChunkRenderer *renderer,
-                                                const uint8_t *shared_uniforms, size_t shared_uniform_size,
-                                                const PBVulkanChunkDraw *draws, uint32_t draw_count,
-                                                const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
-                                                float clear_red, float clear_green,
-                                                float clear_blue, float clear_alpha) {
+PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer,
+                                                 const uint8_t *shared_uniforms, size_t shared_uniform_size,
+                                                 const PBVulkanChunkDraw *draws, uint32_t draw_count,
+                                                 const uint8_t *entity_view_projection, size_t entity_view_projection_size,
+                                                 const PBVulkanEntityDraw *entity_draws, uint32_t entity_draw_count,
+                                                 const PBVulkanParticleDraw *particle_draws, uint32_t particle_draw_count,
+                                                 const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
+                                                 float clear_red, float clear_green,
+                                                 float clear_blue, float clear_alpha) {
     if (renderer == NULL || shared_uniforms == NULL || shared_uniform_size != 192 ||
         (draw_count > 0 && draws == NULL) || (ui_draw_count > 0 && ui_draws == NULL) ||
+        (entity_draw_count > 0 && (entity_draws == NULL || entity_view_projection == NULL ||
+                                   entity_view_projection_size != 64 || renderer->entity_pipeline == VK_NULL_HANDLE)) ||
+        (particle_draw_count > 0 && (particle_draws == NULL || renderer->particle_pipeline == VK_NULL_HANDLE)) ||
+        renderer->composite_pipeline == VK_NULL_HANDLE ||
         renderer->atlas == NULL || (ui_draw_count > 0 && (renderer->ui_pipeline == VK_NULL_HANDLE || renderer->ui_texture == NULL))) {
         return PB_VULKAN_BAD_ARGUMENT;
     }
     PBVulkanSwapchain *swapchain = renderer->swapchain;
     PBVulkanContext *context = swapchain->context;
+    vkWaitForFences(context->device, 1, &swapchain->frame_fence, VK_TRUE, UINT64_MAX);
     VkResult result = pbvk_memory_write(context, renderer->uniform_memory, shared_uniforms, 192);
     if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "chunk uniform upload failed", result);
-    vkWaitForFences(context->device, 1, &swapchain->frame_fence, VK_TRUE, UINT64_MAX);
+    if (entity_draw_count > 0) {
+        result = pbvk_memory_write(context, renderer->entity_frame_memory, entity_view_projection, 64);
+        if (result == VK_SUCCESS) result = vkResetDescriptorPool(context->device,
+                                                                 renderer->entity_descriptor_pool, 0);
+        if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity frame upload failed", result);
+    }
     uint32_t image_index = 0;
     result = vkAcquireNextImageKHR(context->device, swapchain->swapchain, UINT64_MAX,
                                    swapchain->image_available, VK_NULL_HANDLE, &image_index);
@@ -1331,7 +1647,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame(PBVulkanChunkRenderer *renderer,
     clear[1].depthStencil.depth = 1.0f;
     VkRenderPassBeginInfo pass = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
     pass.renderPass = swapchain->render_pass;
-    pass.framebuffer = swapchain->framebuffers[image_index];
+    pass.framebuffer = swapchain->scene_framebuffer;
     pass.renderArea.extent = swapchain->extent;
     pass.clearValueCount = 2;
     pass.pClearValues = clear;
@@ -1363,6 +1679,61 @@ PBVulkanStatus pb_vulkan_renderer_present_frame(PBVulkanChunkRenderer *renderer,
             vkCmdDrawIndexed(command, draw->index_count, 1, draw->first_index, draw->vertex_offset, 0);
         }
     }
+    if (entity_draw_count > 0) {
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->entity_pipeline);
+        for (uint32_t index = 0; index < entity_draw_count; index++) {
+            const PBVulkanEntityDraw *draw = &entity_draws[index];
+            if (draw->mesh == NULL || draw->texture == NULL || draw->vertex_count == 0) continue;
+            VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+            VkDescriptorSetAllocateInfo allocation = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocation.descriptorPool = renderer->entity_descriptor_pool;
+            allocation.descriptorSetCount = 1;
+            allocation.pSetLayouts = &renderer->entity_descriptor_layout;
+            result = vkAllocateDescriptorSets(context->device, &allocation, &descriptor_set);
+            if (result != VK_SUCCESS) {
+                vkCmdEndRenderPass(command);
+                vkEndCommandBuffer(command);
+                return pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity descriptor allocation failed", result);
+            }
+            VkDescriptorImageInfo image = {draw->texture->sampler, draw->texture->view,
+                                            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+            VkDescriptorBufferInfo frame = {renderer->entity_frame_buffer, 0, 64};
+            VkWriteDescriptorSet writes[2];
+            memset(writes, 0, sizeof(writes));
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = descriptor_set; writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1; writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo = &image;
+            writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[1].dstSet = descriptor_set; writes[1].dstBinding = 1;
+            writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[1].pBufferInfo = &frame;
+            vkUpdateDescriptorSets(context->device, 2, writes, 0, NULL);
+            vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->entity_pipeline_layout,
+                                    0, 1, &descriptor_set, 0, NULL);
+            vkCmdPushConstants(command, renderer->entity_pipeline_layout,
+                               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                               0, sizeof(draw->constants), draw->constants);
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(command, 0, 1, &draw->mesh->vertex_buffer, &offset);
+            vkCmdDraw(command, draw->vertex_count, 1, draw->first_vertex, 0);
+        }
+    }
+    if (particle_draw_count > 0) {
+        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->particle_pipeline);
+        vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->particle_pipeline_layout,
+                                0, 1, &renderer->descriptor_set, 0, NULL);
+        for (uint32_t index = 0; index < particle_draw_count; index++) {
+            const PBVulkanParticleDraw *draw = &particle_draws[index];
+            if (draw->mesh == NULL || draw->instance_count == 0) continue;
+            vkCmdPushConstants(command, renderer->particle_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                               0, sizeof(draw->constants), draw->constants);
+            VkBuffer buffers[2] = {draw->mesh->vertex_buffer, draw->mesh->vertex_buffer};
+            VkDeviceSize offsets[2] = {0, draw->instance_offset};
+            vkCmdBindVertexBuffers(command, 0, 2, buffers, offsets);
+            vkCmdDraw(command, 6, draw->instance_count, 0, 0);
+        }
+    }
     if (ui_draw_count > 0) {
         vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->ui_pipeline);
         vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->ui_pipeline_layout,
@@ -1377,6 +1748,22 @@ PBVulkanStatus pb_vulkan_renderer_present_frame(PBVulkanChunkRenderer *renderer,
             vkCmdDraw(command, draw->vertex_count, 1, draw->first_vertex, 0);
         }
     }
+    vkCmdEndRenderPass(command);
+    VkClearValue present_clear;
+    memset(&present_clear, 0, sizeof(present_clear));
+    VkRenderPassBeginInfo present_pass = {VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
+    present_pass.renderPass = swapchain->present_render_pass;
+    present_pass.framebuffer = swapchain->framebuffers[image_index];
+    present_pass.renderArea.extent = swapchain->extent;
+    present_pass.clearValueCount = 1;
+    present_pass.pClearValues = &present_clear;
+    vkCmdBeginRenderPass(command, &present_pass, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(command, 0, 1, &viewport);
+    vkCmdSetScissor(command, 0, 1, &scissor);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->composite_pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->composite_pipeline_layout,
+                            0, 1, &renderer->composite_descriptor_set, 0, NULL);
+    vkCmdDraw(command, 3, 1, 0, 0);
     vkCmdEndRenderPass(command);
     result = vkEndCommandBuffer(command);
     if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "chunk command end failed", result);
@@ -1402,6 +1789,34 @@ PBVulkanStatus pb_vulkan_renderer_present_frame(PBVulkanChunkRenderer *renderer,
     return result == VK_SUCCESS ? PB_VULKAN_OK : pbvk_fail(PB_VULKAN_RENDER_FAILED, "chunk frame present failed", result);
 }
 
+PBVulkanStatus pb_vulkan_renderer_present_frame2(PBVulkanChunkRenderer *renderer,
+                                                 const uint8_t *shared_uniforms, size_t shared_uniform_size,
+                                                 const PBVulkanChunkDraw *draws, uint32_t draw_count,
+                                                 const uint8_t *entity_view_projection, size_t entity_view_projection_size,
+                                                 const PBVulkanEntityDraw *entity_draws, uint32_t entity_draw_count,
+                                                 const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
+                                                 float clear_red, float clear_green,
+                                                 float clear_blue, float clear_alpha) {
+    return pb_vulkan_renderer_present_frame3(renderer, shared_uniforms, shared_uniform_size,
+                                             draws, draw_count,
+                                             entity_view_projection, entity_view_projection_size,
+                                             entity_draws, entity_draw_count, NULL, 0,
+                                             ui_draws, ui_draw_count,
+                                             clear_red, clear_green, clear_blue, clear_alpha);
+}
+
+PBVulkanStatus pb_vulkan_renderer_present_frame(PBVulkanChunkRenderer *renderer,
+                                                const uint8_t *shared_uniforms, size_t shared_uniform_size,
+                                                const PBVulkanChunkDraw *draws, uint32_t draw_count,
+                                                const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
+                                                float clear_red, float clear_green,
+                                                float clear_blue, float clear_alpha) {
+    return pb_vulkan_renderer_present_frame2(renderer, shared_uniforms, shared_uniform_size,
+                                             draws, draw_count, NULL, 0, NULL, 0,
+                                             ui_draws, ui_draw_count,
+                                             clear_red, clear_green, clear_blue, clear_alpha);
+}
+
 PBVulkanStatus pb_vulkan_chunk_renderer_present(PBVulkanChunkRenderer *renderer,
                                                 const uint8_t *shared_uniforms, size_t shared_uniform_size,
                                                 const PBVulkanChunkDraw *draws, uint32_t draw_count,
@@ -1419,6 +1834,9 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
         vkDeviceWaitIdle(context->device);
         pbvk_chunk_pipelines_release(renderer);
         pbvk_ui_pipeline_release(renderer);
+        pbvk_entity_pipeline_release(renderer);
+        pbvk_particle_pipeline_release(renderer);
+        pbvk_composite_pipeline_release(renderer);
         pbvk_shadow_release(renderer);
         if (renderer->uniform_buffer != VK_NULL_HANDLE) vkDestroyBuffer(context->device, renderer->uniform_buffer, NULL);
         if (renderer->uniform_memory != VK_NULL_HANDLE) vkFreeMemory(context->device, renderer->uniform_memory, NULL);
@@ -1428,12 +1846,28 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
         if (renderer->ui_descriptor_pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(context->device, renderer->ui_descriptor_pool, NULL);
         if (renderer->ui_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->ui_pipeline_layout, NULL);
         if (renderer->ui_descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(context->device, renderer->ui_descriptor_layout, NULL);
+        if (renderer->entity_frame_buffer != VK_NULL_HANDLE) vkDestroyBuffer(context->device, renderer->entity_frame_buffer, NULL);
+        if (renderer->entity_frame_memory != VK_NULL_HANDLE) vkFreeMemory(context->device, renderer->entity_frame_memory, NULL);
+        if (renderer->entity_descriptor_pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(context->device, renderer->entity_descriptor_pool, NULL);
+        if (renderer->entity_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->entity_pipeline_layout, NULL);
+        if (renderer->entity_descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(context->device, renderer->entity_descriptor_layout, NULL);
+        if (renderer->particle_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->particle_pipeline_layout, NULL);
+        if (renderer->composite_sampler != VK_NULL_HANDLE) vkDestroySampler(context->device, renderer->composite_sampler, NULL);
+        if (renderer->composite_descriptor_pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(context->device, renderer->composite_descriptor_pool, NULL);
+        if (renderer->composite_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->composite_pipeline_layout, NULL);
+        if (renderer->composite_descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(context->device, renderer->composite_descriptor_layout, NULL);
     }
     free(renderer->vertex_spirv);
     free(renderer->fragment_spirv);
     free(renderer->ui_vertex_spirv);
     free(renderer->ui_fragment_spirv);
     free(renderer->shadow_vertex_spirv);
+    free(renderer->entity_vertex_spirv);
+    free(renderer->entity_fragment_spirv);
+    free(renderer->particle_vertex_spirv);
+    free(renderer->particle_fragment_spirv);
+    free(renderer->composite_vertex_spirv);
+    free(renderer->composite_fragment_spirv);
     free(renderer);
 }
 
@@ -1604,7 +2038,12 @@ static void pbvk_swapchain_release(PBVulkanSwapchain *swapchain) {
             if (swapchain->framebuffers[index] != VK_NULL_HANDLE) vkDestroyFramebuffer(device, swapchain->framebuffers[index], NULL);
         }
     }
+    if (swapchain->scene_framebuffer != VK_NULL_HANDLE) vkDestroyFramebuffer(device, swapchain->scene_framebuffer, NULL);
     if (swapchain->render_pass != VK_NULL_HANDLE) vkDestroyRenderPass(device, swapchain->render_pass, NULL);
+    if (swapchain->present_render_pass != VK_NULL_HANDLE) vkDestroyRenderPass(device, swapchain->present_render_pass, NULL);
+    if (swapchain->scene_view != VK_NULL_HANDLE) vkDestroyImageView(device, swapchain->scene_view, NULL);
+    if (swapchain->scene_image != VK_NULL_HANDLE) vkDestroyImage(device, swapchain->scene_image, NULL);
+    if (swapchain->scene_memory != VK_NULL_HANDLE) vkFreeMemory(device, swapchain->scene_memory, NULL);
     if (swapchain->depth_view != VK_NULL_HANDLE) vkDestroyImageView(device, swapchain->depth_view, NULL);
     if (swapchain->depth_image != VK_NULL_HANDLE) vkDestroyImage(device, swapchain->depth_image, NULL);
     if (swapchain->depth_memory != VK_NULL_HANDLE) vkFreeMemory(device, swapchain->depth_memory, NULL);
@@ -1625,6 +2064,11 @@ static void pbvk_swapchain_release(PBVulkanSwapchain *swapchain) {
     swapchain->image_count = 0;
     swapchain->swapchain = VK_NULL_HANDLE;
     swapchain->render_pass = VK_NULL_HANDLE;
+    swapchain->present_render_pass = VK_NULL_HANDLE;
+    swapchain->scene_framebuffer = VK_NULL_HANDLE;
+    swapchain->scene_view = VK_NULL_HANDLE;
+    swapchain->scene_image = VK_NULL_HANDLE;
+    swapchain->scene_memory = VK_NULL_HANDLE;
     swapchain->depth_view = VK_NULL_HANDLE;
     swapchain->depth_image = VK_NULL_HANDLE;
     swapchain->depth_memory = VK_NULL_HANDLE;
@@ -1714,6 +2158,33 @@ static PBVulkanStatus pbvk_swapchain_build(PBVulkanSwapchain *swapchain, uint32_
         if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "swapchain image view failed", result); }
     }
 
+    VkImageCreateInfo scene_image = {VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    scene_image.imageType = VK_IMAGE_TYPE_2D;
+    scene_image.format = swapchain->format;
+    scene_image.extent.width = extent.width; scene_image.extent.height = extent.height; scene_image.extent.depth = 1;
+    scene_image.mipLevels = 1; scene_image.arrayLayers = 1; scene_image.samples = VK_SAMPLE_COUNT_1_BIT;
+    scene_image.tiling = VK_IMAGE_TILING_OPTIMAL;
+    scene_image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    scene_image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    result = vkCreateImage(context->device, &scene_image, NULL, &swapchain->scene_image);
+    VkMemoryRequirements scene_requirements;
+    if (result == VK_SUCCESS) vkGetImageMemoryRequirements(context->device, swapchain->scene_image, &scene_requirements);
+    uint32_t scene_memory_type = result == VK_SUCCESS
+        ? pbvk_memory_type(context, scene_requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) : UINT32_MAX;
+    VkMemoryAllocateInfo scene_allocation = {VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+    if (result == VK_SUCCESS && scene_memory_type != UINT32_MAX) {
+        scene_allocation.allocationSize = scene_requirements.size;
+        scene_allocation.memoryTypeIndex = scene_memory_type;
+        result = vkAllocateMemory(context->device, &scene_allocation, NULL, &swapchain->scene_memory);
+    } else if (result == VK_SUCCESS) result = VK_ERROR_FEATURE_NOT_PRESENT;
+    if (result == VK_SUCCESS) result = vkBindImageMemory(context->device, swapchain->scene_image, swapchain->scene_memory, 0);
+    VkImageViewCreateInfo scene_view = {VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    scene_view.image = swapchain->scene_image; scene_view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    scene_view.format = swapchain->format; scene_view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    scene_view.subresourceRange.levelCount = 1; scene_view.subresourceRange.layerCount = 1;
+    if (result == VK_SUCCESS) result = vkCreateImageView(context->device, &scene_view, NULL, &swapchain->scene_view);
+    if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "scene image creation failed", result); }
+
     VkImageCreateInfo depth_image = {0};
     depth_image.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     depth_image.imageType = VK_IMAGE_TYPE_2D;
@@ -1759,7 +2230,7 @@ static PBVulkanStatus pbvk_swapchain_build(PBVulkanSwapchain *swapchain, uint32_
     attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     attachments[1].format = VK_FORMAT_D32_SFLOAT;
     attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
     attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
@@ -1775,34 +2246,67 @@ static PBVulkanStatus pbvk_swapchain_build(PBVulkanSwapchain *swapchain, uint32_
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &reference;
     subpass.pDepthStencilAttachment = &depth_reference;
-    VkSubpassDependency dependency = {0};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    VkSubpassDependency dependencies[2]; memset(dependencies, 0, sizeof(dependencies));
+    dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[0].dstSubpass = 0;
+    dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependencies[1].srcSubpass = 0;
+    dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+    dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependencies[1].dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependencies[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     VkRenderPassCreateInfo render_pass = {0};
     render_pass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     render_pass.attachmentCount = 2;
     render_pass.pAttachments = attachments;
     render_pass.subpassCount = 1;
     render_pass.pSubpasses = &subpass;
-    render_pass.dependencyCount = 1;
-    render_pass.pDependencies = &dependency;
+    render_pass.dependencyCount = 2;
+    render_pass.pDependencies = dependencies;
     result = vkCreateRenderPass(context->device, &render_pass, NULL, &swapchain->render_pass);
     if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "swapchain render pass failed", result); }
+    VkFramebufferCreateInfo scene_framebuffer = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+    scene_framebuffer.renderPass = swapchain->render_pass;
+    VkImageView scene_attachments[2] = {swapchain->scene_view, swapchain->depth_view};
+    scene_framebuffer.attachmentCount = 2; scene_framebuffer.pAttachments = scene_attachments;
+    scene_framebuffer.width = extent.width; scene_framebuffer.height = extent.height; scene_framebuffer.layers = 1;
+    result = vkCreateFramebuffer(context->device, &scene_framebuffer, NULL, &swapchain->scene_framebuffer);
+    if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "scene framebuffer failed", result); }
+
+    VkAttachmentDescription present_attachment = {0};
+    present_attachment.format = swapchain->format; present_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    present_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; present_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    present_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    present_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    present_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    present_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    VkAttachmentReference present_reference = {0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkSubpassDescription present_subpass = {0};
+    present_subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    present_subpass.colorAttachmentCount = 1; present_subpass.pColorAttachments = &present_reference;
+    VkSubpassDependency present_dependency = {0};
+    present_dependency.srcSubpass = VK_SUBPASS_EXTERNAL; present_dependency.dstSubpass = 0;
+    present_dependency.srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    present_dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    present_dependency.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    present_dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    VkRenderPassCreateInfo present_pass = {VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+    present_pass.attachmentCount = 1; present_pass.pAttachments = &present_attachment;
+    present_pass.subpassCount = 1; present_pass.pSubpasses = &present_subpass;
+    present_pass.dependencyCount = 1; present_pass.pDependencies = &present_dependency;
+    result = vkCreateRenderPass(context->device, &present_pass, NULL, &swapchain->present_render_pass);
+    if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "present render pass failed", result); }
     for (uint32_t index = 0; index < swapchain->image_count; index++) {
-        VkFramebufferCreateInfo framebuffer = {0};
-        framebuffer.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer.renderPass = swapchain->render_pass;
-        VkImageView framebuffer_attachments[2] = {swapchain->views[index], swapchain->depth_view};
-        framebuffer.attachmentCount = 2;
-        framebuffer.pAttachments = framebuffer_attachments;
-        framebuffer.width = extent.width;
-        framebuffer.height = extent.height;
-        framebuffer.layers = 1;
+        VkFramebufferCreateInfo framebuffer = {VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        framebuffer.renderPass = swapchain->present_render_pass;
+        framebuffer.attachmentCount = 1; framebuffer.pAttachments = &swapchain->views[index];
+        framebuffer.width = extent.width; framebuffer.height = extent.height; framebuffer.layers = 1;
         result = vkCreateFramebuffer(context->device, &framebuffer, NULL, &swapchain->framebuffers[index]);
-        if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "swapchain framebuffer failed", result); }
+        if (result != VK_SUCCESS) { pbvk_swapchain_release(swapchain); return pbvk_fail(PB_VULKAN_RENDER_FAILED, "present framebuffer failed", result); }
     }
     VkCommandPoolCreateInfo pool = {0};
     pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -1869,19 +2373,18 @@ PBVulkanStatus pb_vulkan_swapchain_present_clear(PBVulkanSwapchain *swapchain,
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
     result = vkBeginCommandBuffer(command, &begin);
     if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "swapchain command begin failed", result);
-    VkClearValue clear[2];
+    VkClearValue clear[1];
     memset(clear, 0, sizeof(clear));
     clear[0].color.float32[0] = red;
     clear[0].color.float32[1] = green;
     clear[0].color.float32[2] = blue;
     clear[0].color.float32[3] = alpha;
-    clear[1].depthStencil.depth = 1.0f;
     VkRenderPassBeginInfo pass = {0};
     pass.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    pass.renderPass = swapchain->render_pass;
+    pass.renderPass = swapchain->present_render_pass;
     pass.framebuffer = swapchain->framebuffers[image_index];
     pass.renderArea.extent = swapchain->extent;
-    pass.clearValueCount = 2;
+    pass.clearValueCount = 1;
     pass.pClearValues = clear;
     vkCmdBeginRenderPass(command, &pass, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdEndRenderPass(command);

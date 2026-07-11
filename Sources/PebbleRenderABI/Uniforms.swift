@@ -216,6 +216,27 @@
     public static let stride = 1728
 }
 
+/// Compact Vulkan entity draw constants. The view-projection matrix is shared
+/// per frame; this block is pushed once per entity.
+@frozen public struct EntityDrawPacketConstants: Sendable {
+    public var model: ABIMat4
+    public var light: SIMD4<Float>
+    public var misc: SIMD4<Float>
+    public var overlay: SIMD4<Float>
+    public var fogColor: SIMD4<Float>
+
+    public init(model: ABIMat4, light: SIMD4<Float>, misc: SIMD4<Float>,
+                overlay: SIMD4<Float>, fogColor: SIMD4<Float>) {
+        self.model = model
+        self.light = light
+        self.misc = misc
+        self.overlay = overlay
+        self.fogColor = fogColor
+    }
+
+    public static let stride = 128
+}
+
 /// particle_vs uniforms (buffer index **2** — buffers 0/1 are the two vertex
 /// streams; see ParticleCornerVertex/ParticleInstance in RenderABI.swift).
 /// Mirrors `ParticleU` (Shaders.swift:60-64) / `ParticleUniforms`

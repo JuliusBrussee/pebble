@@ -18,6 +18,26 @@ private struct WinSectionMeshes {
     var translucent: MeshHandle?
 }
 
+private struct WinEntityResources {
+    let mesh: MeshHandle
+    let texture: TextureHandle
+    let vertexCount: UInt32
+    let scale: Float
+}
+
+private struct WinParticle {
+    var position: SIMD3<Double>
+    var velocity: SIMD3<Double>
+    var age: Double = 0
+    var lifetime: Double
+    var size: Double
+    var gravity: Double
+    var tile: Int
+    var color: SIMD3<Float>
+    var light: Float
+    var shrink: Bool
+}
+
 final class WindowsGameHost: GameHost {
     let renderer: VulkanRendererBackend
     let atlas: TextureHandle
@@ -27,6 +47,11 @@ final class WindowsGameHost: GameHost {
     private var screenOpen = false
     private let uiCanvas = UICanvasCPU(width: 1, height: 1)
     private var uiMesh: MeshHandle?
+    private var entityResources: [String: WinEntityResources] = [:]
+    private var particles: [WinParticle] = []
+    private var particleMesh: MeshHandle?
+    private var particleClock: Double?
+    private var particleRandom: UInt32 = 0x70656262
 
     init(renderer: VulkanRendererBackend) throws {
         self.renderer = renderer
@@ -42,6 +67,11 @@ final class WindowsGameHost: GameHost {
     deinit {
         audioOutput?.stop()
         if let uiMesh { renderer.destroyMesh(uiMesh) }
+        if let particleMesh { renderer.destroyMesh(particleMesh) }
+        for resources in entityResources.values {
+            renderer.destroyMesh(resources.mesh)
+            renderer.destroyTexture(resources.texture)
+        }
         renderer.destroyTexture(atlas)
     }
 
@@ -59,6 +89,9 @@ final class WindowsGameHost: GameHost {
             Float(detCos(cam.pitch) * -detSin(cam.yaw)),
             Float(detSin(-cam.pitch)),
             Float(detCos(cam.pitch) * detCos(cam.yaw)))
+        let right = normalized(SIMD3<Float>(direction.z, 0, -direction.x),
+                               fallback: SIMD3<Float>(1, 0, 0))
+        let cameraUp = normalized(cross(right, direction), fallback: SIMD3<Float>(0, 1, 0))
         let view = mat4LookDir(eye: .zero, dir: direction, up: SIMD3<Float>(0, 1, 0))
         let viewProjection = projection * view
         let world = game.world
@@ -135,6 +168,11 @@ final class WindowsGameHost: GameHost {
             add(section.cutout, .cutout, false)
             add(section.translucent, .translucent, true)
         }
+        appendEntities(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
+                       partial: partial, uniforms: uniforms, builder: &builder)
+        appendParticles(cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
+                        viewProjection: camera.viewProj, right: right, up: cameraUp,
+                        dayLight: dayLight, timeSec: timeSec, builder: &builder)
         appendUI(game: game, target: target, builder: &builder)
         return builder.finish(includeEmptyPasses: false)
     }
@@ -182,6 +220,200 @@ final class WindowsGameHost: GameHost {
 
     private func abi(_ matrix: Mat4f) -> ABIMat4 {
         ABIMat4(c0: matrix[0], c1: matrix[1], c2: matrix[2], c3: matrix[3])
+    }
+
+    private func appendEntities(game: GameCore, cameraPosition: SIMD3<Double>, partial: Double,
+                                uniforms: FrameUniforms, builder: inout FrameBuilder) {
+        let maximumDistanceSquared = game.settings.entityDistance * game.settings.entityDistance
+        for reference in game.world.entities {
+            guard let entity = reference as? Entity, !entity.dead else { continue }
+            if entity === game.player && game.perspective == 0 { continue }
+            let dx = entity.x - cameraPosition.x, dz = entity.z - cameraPosition.z
+            let distanceSquared = dx * dx + dz * dz
+            if distanceSquared > maximumDistanceSquared { continue }
+            guard let modelName = entityModelName(entity),
+                  let resources = resourcesForEntity(modelName) else { continue }
+            let x = entity.prevX + (entity.x - entity.prevX) * partial
+            let y = entity.prevY + (entity.y - entity.prevY) * partial
+            let z = entity.prevZ + (entity.z - entity.prevZ) * partial
+            let yaw = entity.prevYaw + wrappedAngle(entity.yaw - entity.prevYaw) * partial
+            let babyScale: Float = entity.data.baby == true ? 0.5 : 1
+            var model = mat4Identity()
+            model = mat4Translate(model, Float(x - cameraPosition.x), Float(y - cameraPosition.y),
+                                  Float(z - cameraPosition.z))
+            model = mat4RotateY(model, Float(.pi - yaw))
+            let scale = resources.scale * babyScale
+            model = mat4Scale(model, scale, scale, scale)
+            let bx = Int(entity.x.rounded(.down))
+            let by = Int((entity.y + entity.height * 0.5).rounded(.down))
+            let bz = Int(entity.z.rounded(.down))
+            let sky = Float(game.world.getSkyLight(bx, by, bz))
+            let block = Float(game.world.getBlockLight(bx, by, bz))
+            let hurt = entity.invulnTicks > 0 ? min(0.5, Float(entity.invulnTicks) / 20) : 0
+            let constants = EntityDrawPacketConstants(
+                model: abi(model),
+                light: SIMD4<Float>(sky, block, uniforms.dayLight, uniforms.gamma),
+                misc: SIMD4<Float>(uniforms.ambient, 1, uniforms.fogStart, uniforms.fogEnd),
+                overlay: SIMD4<Float>(1, 0.2, 0.2, hurt),
+                fogColor: uniforms.fogColor)
+            builder.addDraw(
+                pass: .entities, pipeline: .entity, mesh: resources.mesh,
+                depthBucket: FrameBuilder.opaqueDepthBucket(distanceSquared: Float(distanceSquared)),
+                vertexRange: 0..<resources.vertexCount,
+                textures: [TextureBinding(index: 0, texture: resources.texture, sampler: nil)],
+                pushConstants: RenderBytes.copy(constants))
+        }
+    }
+
+    private func resourcesForEntity(_ name: String) -> WinEntityResources? {
+        if let cached = entityResources[name] { return cached }
+        let geometry = buildEntityGeometry(name)
+        guard let mesh = try? renderer.createMesh(RenderMeshData(
+            vertexLayout: .entity, vertexBytes: geometry.verts.withUnsafeBytes { Array($0) },
+            indexBytes: [], indexFormat: .uint32)) else { return nil }
+        guard let texture = try? renderer.createTexture(RenderTextureData(
+            width: geometry.skin.w, height: geometry.skin.h,
+            format: .rgba8Unorm, bytes: geometry.skin.data)) else {
+            renderer.destroyMesh(mesh)
+            return nil
+        }
+        let resources = WinEntityResources(mesh: mesh, texture: texture,
+                                           vertexCount: UInt32(geometry.vertexCount),
+                                           scale: Float(geometry.model.scale))
+        entityResources[name] = resources
+        return resources
+    }
+
+    private func entityModelName(_ entity: Entity) -> String? {
+        if hasModel(entity.type) { return entity.type }
+        switch entity.type {
+        case "arrow", "trident": return "arrow_model"
+        case "end_crystal": return "end_crystal_model"
+        case "boat": return "boat_model"
+        case "minecart": return "minecart_model"
+        default: return nil
+        }
+    }
+
+    private func wrappedAngle(_ angle: Double) -> Double {
+        var value = angle
+        while value > .pi { value -= .pi * 2 }
+        while value < -.pi { value += .pi * 2 }
+        return value
+    }
+
+    private func appendParticles(cameraPosition: SIMD3<Double>, viewProjection: ABIMat4,
+                                 right: SIMD3<Float>, up: SIMD3<Float>, dayLight: Float,
+                                 timeSec: Double, builder: inout FrameBuilder) {
+        let elapsed = min(0.1, max(0, timeSec - (particleClock ?? timeSec)))
+        particleClock = timeSec
+        if elapsed > 0 {
+            for index in particles.indices {
+                particles[index].age += elapsed
+                particles[index].velocity.y -= particles[index].gravity * elapsed * 20
+                let drag = pow(0.98, elapsed * 20)
+                particles[index].velocity *= drag
+                particles[index].position += particles[index].velocity * (elapsed * 20)
+            }
+            particles.removeAll { $0.age >= $0.lifetime }
+        }
+        guard !particles.isEmpty else { return }
+        let corners: [Float] = [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]
+        var instances: [ParticleInstance] = []
+        instances.reserveCapacity(particles.count)
+        for particle in particles {
+            let lifeScale = particle.shrink ? max(0.2, 1 - particle.age / particle.lifetime) : 1
+            let encoded = Double(particle.tile * 256) + min(255, particle.size * lifeScale * 100)
+            instances.append(ParticleInstance(
+                x: Float(particle.position.x - cameraPosition.x),
+                y: Float(particle.position.y - cameraPosition.y),
+                z: Float(particle.position.z - cameraPosition.z),
+                u0: 0, v0: 0, u1: 1, v1: 1, layerSize: Float(encoded),
+                r: particle.color.x, g: particle.color.y, b: particle.color.z, light: particle.light))
+        }
+        var bytes = corners.withUnsafeBytes { Array($0) }
+        bytes.append(contentsOf: RenderBytes.copy(instances))
+        let data = RenderMeshData(vertexLayout: .particle, vertexBytes: bytes)
+        if let particleMesh {
+            try? renderer.updateMesh(particleMesh, data: data)
+        } else {
+            particleMesh = try? renderer.createMesh(data)
+        }
+        guard let particleMesh else { return }
+        let constants = ParticleUniforms(
+            viewProj: viewProjection,
+            right: SIMD4<Float>(right.x, right.y, right.z, 0),
+            up: SIMD4<Float>(up.x, up.y, up.z, dayLight))
+        builder.addDraw(pass: .particles, pipeline: .particle, mesh: particleMesh,
+                        vertexRange: 0..<6, instanceRange: 0..<UInt32(instances.count),
+                        textures: [TextureBinding(index: 3, texture: atlas, sampler: nil)],
+                        pushConstants: RenderBytes.copy(constants))
+    }
+
+    private func spawnParticles(_ type: String, x: Double, y: Double, z: Double,
+                                count: Int, spread: Double, cell: Int = 0) {
+        for _ in 0..<max(0, count) {
+            if particles.count >= 4096 { particles.removeFirst() }
+            let ox = (randomUnit() - 0.5) * spread * 2
+            let oy = (randomUnit() - 0.5) * spread * 2
+            let oz = (randomUnit() - 0.5) * spread * 2
+            var tile = tileId("crit_particle")
+            var color = SIMD3<Float>(1, 1, 1)
+            var gravity = 0.04
+            var lifetime = 1.2 + randomUnit()
+            var size = 0.1 + randomUnit() * 0.05
+            var velocity = SIMD3<Double>((randomUnit() - 0.5) * 0.08,
+                                         randomUnit() * 0.1,
+                                         (randomUnit() - 0.5) * 0.08)
+            var light: Float = 1
+            var shrink = true
+            switch type {
+            case "block":
+                let id = cell >> 4
+                if id > 0 && id < blockDefs.count {
+                    let definition = blockDefs[id]
+                    tile = definition.texFn?(cell & 15, 2) ?? (definition.tex.isEmpty ? tile : Int(definition.tex[2]))
+                }
+                velocity = SIMD3<Double>((randomUnit() - 0.5) * 0.2,
+                                         randomUnit() * 0.18 + 0.05,
+                                         (randomUnit() - 0.5) * 0.2)
+                lifetime = 0.7 + randomUnit() * 0.8
+            case "smoke", "campfire_smoke":
+                tile = tileId("smoke_particle"); color = SIMD3<Float>(repeating: 0.35)
+                gravity = -0.004; velocity.y = 0.04 + randomUnit() * 0.04
+                lifetime = type == "campfire_smoke" ? 5 : 2; size = 0.17
+            case "flame", "soul_flame":
+                tile = tileId("flame_particle"); gravity = -0.002; lifetime = 1; size = 0.07
+                if type == "soul_flame" { color = SIMD3<Float>(0.2, 0.85, 0.9) }
+            case "heart": tile = tileId("heart_particle"); gravity = -0.002; lifetime = 1.2; size = 0.12
+            case "portal", "dragon_breath":
+                tile = tileId("portal_particle"); color = SIMD3<Float>(0.72, 0.2, 0.85); gravity = -0.005
+            case "rain": tile = tileId("splash_particle"); velocity = SIMD3<Double>(0, -0.95, 0); gravity = 0; shrink = false
+            case "snow": tile = tileId("snow_particle"); velocity.y = -0.07; gravity = 0; lifetime = 6; shrink = false
+            case "explosion": tile = tileId("smoke_particle"); size = 0.7; lifetime = 0.8
+            default: break
+            }
+            particles.append(WinParticle(position: SIMD3<Double>(x + ox, y + oy, z + oz),
+                                         velocity: velocity, lifetime: lifetime, size: size,
+                                         gravity: gravity, tile: tile, color: color,
+                                         light: light, shrink: shrink))
+        }
+    }
+
+    private func randomUnit() -> Double {
+        particleRandom = particleRandom &* 1664525 &+ 1013904223
+        return Double(particleRandom) / Double(UInt32.max)
+    }
+
+    private func cross(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> SIMD3<Float> {
+        SIMD3<Float>(a.y * b.z - a.z * b.y,
+                     a.z * b.x - a.x * b.z,
+                     a.x * b.y - a.y * b.x)
+    }
+
+    private func normalized(_ value: SIMD3<Float>, fallback: SIMD3<Float>) -> SIMD3<Float> {
+        let length = sqrt(value.x * value.x + value.y * value.y + value.z * value.z)
+        return length > 0.0001 ? value / length : fallback
     }
 
     private func appendUI(game: GameCore, target: RenderTarget, builder: inout FrameBuilder) {
@@ -262,6 +494,10 @@ final class WindowsGameHost: GameHost {
     }
     func tickMusic(_ mood: String, _ enabled: Bool) {}
     func stopDisc() {}
-    func addParticles(_ type: String, _ x: Double, _ y: Double, _ z: Double, _ count: Int, _ spread: Double, _ cell: Int) {}
-    func spawnPrecipitation(_ kind: String, _ x: Double, _ y: Double, _ z: Double, _ groundY: Double) {}
+    func addParticles(_ type: String, _ x: Double, _ y: Double, _ z: Double, _ count: Int, _ spread: Double, _ cell: Int) {
+        spawnParticles(type, x: x, y: y, z: z, count: count, spread: spread, cell: cell)
+    }
+    func spawnPrecipitation(_ kind: String, _ x: Double, _ y: Double, _ z: Double, _ groundY: Double) {
+        spawnParticles(kind, x: x, y: y, z: z, count: 1, spread: 0.15)
+    }
 }

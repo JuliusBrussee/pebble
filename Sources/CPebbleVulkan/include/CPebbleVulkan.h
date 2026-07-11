@@ -38,6 +38,13 @@ typedef struct PBVulkanEntityDraw {
     uint32_t first_vertex;
 } PBVulkanEntityDraw;
 
+typedef struct PBVulkanParticleDraw {
+    PBVulkanMesh *mesh;
+    float constants[24];
+    uint32_t instance_offset;
+    uint32_t instance_count;
+} PBVulkanParticleDraw;
+
 typedef enum PBVulkanStatus {
     PB_VULKAN_OK = 0,
     PB_VULKAN_BAD_ARGUMENT = -1,
@@ -46,8 +53,8 @@ typedef enum PBVulkanStatus {
     PB_VULKAN_INSTANCE_FAILED = -4,
     PB_VULKAN_DEVICE_FAILED = -5,
     PB_VULKAN_OUT_OF_MEMORY = -6,
-    PB_VULKAN_RENDER_FAILED = -7
-    ,PB_VULKAN_OUT_OF_DATE = -8
+    PB_VULKAN_RENDER_FAILED = -7,
+    PB_VULKAN_OUT_OF_DATE = -8
 } PBVulkanStatus;
 
 typedef struct PBVulkanInfo {
@@ -116,6 +123,12 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_shadow(PBVulkanChunkRenderer *re
 PBVulkanStatus pb_vulkan_chunk_renderer_install_entities(PBVulkanChunkRenderer *renderer,
                                                          const uint8_t *vertex_spirv, size_t vertex_spirv_size,
                                                          const uint8_t *fragment_spirv, size_t fragment_spirv_size);
+PBVulkanStatus pb_vulkan_chunk_renderer_install_particles(PBVulkanChunkRenderer *renderer,
+                                                          const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                          const uint8_t *fragment_spirv, size_t fragment_spirv_size);
+PBVulkanStatus pb_vulkan_chunk_renderer_install_postprocess(PBVulkanChunkRenderer *renderer,
+                                                            const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                            const uint8_t *fragment_spirv, size_t fragment_spirv_size);
 PBVulkanStatus pb_vulkan_chunk_renderer_set_ui_texture(PBVulkanChunkRenderer *renderer,
                                                        PBVulkanTexture *texture);
 PBVulkanStatus pb_vulkan_chunk_renderer_present(PBVulkanChunkRenderer *renderer,
@@ -134,6 +147,15 @@ PBVulkanStatus pb_vulkan_renderer_present_frame2(PBVulkanChunkRenderer *renderer
                                                  const PBVulkanChunkDraw *chunk_draws, uint32_t chunk_draw_count,
                                                  const uint8_t *entity_view_projection, size_t entity_view_projection_size,
                                                  const PBVulkanEntityDraw *entity_draws, uint32_t entity_draw_count,
+                                                 const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
+                                                 float clear_red, float clear_green,
+                                                 float clear_blue, float clear_alpha);
+PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer,
+                                                 const uint8_t *shared_uniforms, size_t shared_uniform_size,
+                                                 const PBVulkanChunkDraw *chunk_draws, uint32_t chunk_draw_count,
+                                                 const uint8_t *entity_view_projection, size_t entity_view_projection_size,
+                                                 const PBVulkanEntityDraw *entity_draws, uint32_t entity_draw_count,
+                                                 const PBVulkanParticleDraw *particle_draws, uint32_t particle_draw_count,
                                                  const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
                                                  float clear_red, float clear_green,
                                                  float clear_blue, float clear_alpha);
