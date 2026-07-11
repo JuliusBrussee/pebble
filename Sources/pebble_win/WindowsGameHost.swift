@@ -61,6 +61,9 @@ final class WindowsGameHost: GameHost {
     private var bossBars: [BossBarInfo] = []
     private let resourcePacks: ResourcePackStack
     private let customSkinURL: URL
+    private var musicMood = ""
+    private var musicCooldown = 0
+    private var discPlaying = false
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -89,6 +92,8 @@ final class WindowsGameHost: GameHost {
 
     func buildFrame(game: GameCore, target: RenderTarget,
                     partial: Double, timeSec: Double) -> FramePacket {
+        mixer.setVolumes(master: game.settings.volumes["master"] ?? 0.8,
+                         categories: game.settings.volumes.filter { $0.key != "master" })
         guard game.hasWorld() else {
             return emptyFrame(target: target, timeSec: timeSec)
         }
@@ -603,12 +608,24 @@ final class WindowsGameHost: GameHost {
     func setBossBars(_ bars: [BossBarInfo]) { bossBars = bars }
 
     func playSound(_ name: String, _ x: Double, _ y: Double, _ z: Double, _ volume: Double, _ pitch: Double) {
+        if name == "jukebox.stop" { stopDisc(); return }
+        if name.hasPrefix("jukebox.play.") {
+            playDisc(name, position: SIMD3<Double>(x, y, z), volume: volume)
+            return
+        }
         let seed = hashString(name)
         let frequency = 120 + Double(seed % 720)
-        mixer.enqueue(AudioVoice(waveform: name.contains("step") ? .noise : .sine,
-                                 frequency: frequency * pitch, duration: 0.12,
+        let waveform: AudioWaveform = name.contains("step") || name.contains("break") ? .noise
+            : name.contains("explode") ? .noise : name.contains("hurt") ? .sawtooth : .sine
+        let duration = name.contains("explode") ? 0.8 : name.contains("ambient") ? 0.7 : 0.12
+        mixer.enqueue(AudioVoice(waveform: waveform,
+                                 frequency: frequency * pitch,
+                                 endFrequency: name.contains("hurt") ? frequency * pitch * 0.55 : nil,
+                                 duration: duration,
                                  volume: min(1, volume) * 0.25, category: "blocks",
-                                 spatialPosition: SIMD3<Double>(x, y, z)))
+                                 spatialPosition: SIMD3<Double>(x, y, z),
+                                 maxDistance: name.contains("explode") ? 48 : 18,
+                                 reverbSend: name.contains("ambient") ? 0.5 : 0.15))
     }
     func playUI(_ name: String) {
         mixer.enqueue(AudioVoice(waveform: .square, frequency: 640, duration: 0.045,
@@ -620,8 +637,74 @@ final class WindowsGameHost: GameHost {
     func setAudioListener(_ x: Double, _ y: Double, _ z: Double, _ yaw: Double) {
         mixer.setListener(AudioListener(position: SIMD3<Double>(x, y, z), yaw: yaw))
     }
-    func tickMusic(_ mood: String, _ enabled: Bool) {}
-    func stopDisc() {}
+    func tickMusic(_ mood: String, _ enabled: Bool) {
+        if !enabled || discPlaying { return }
+        if mood != musicMood {
+            musicMood = mood
+            musicCooldown = 0
+        }
+        if musicCooldown > 0 {
+            musicCooldown -= 1
+            return
+        }
+        let seed = hashString(mood)
+        let root: Double
+        let waveform: AudioWaveform
+        switch mood {
+        case "nether": root = 73.42; waveform = .triangle
+        case "end": root = 110; waveform = .sine
+        case "cave": root = 82.41; waveform = .sine
+        case "night": root = 146.83; waveform = .triangle
+        default: root = 130.81; waveform = .sine
+        }
+        let scale = [0, 2, 4, 7, 9, 12]
+        for note in 0..<12 {
+            let degree = scale[Int((seed &+ UInt32(note * 7)) % UInt32(scale.count))]
+            let frequency = root * pow(2, Double(degree) / 12)
+            mixer.enqueue(AudioVoice(waveform: waveform, frequency: frequency,
+                                     duration: 2.8, attack: 0.35, volume: 0.055,
+                                     pan: note.isMultiple(of: 2) ? -0.18 : 0.18,
+                                     category: "music", startDelay: Double(note) * 0.72,
+                                     reverbSend: 0.7))
+            if note.isMultiple(of: 3) {
+                mixer.enqueue(AudioVoice(waveform: .sine, frequency: frequency / 2,
+                                         duration: 4.2, attack: 0.8, volume: 0.035,
+                                         category: "music", startDelay: Double(note) * 0.72,
+                                         reverbSend: 0.8))
+            }
+        }
+        musicCooldown = 20 * (32 + Int(seed % 30))
+    }
+    func stopDisc() {
+        if discPlaying { mixer.stopAll() }
+        discPlaying = false
+        musicCooldown = 100
+    }
+
+    private func playDisc(_ name: String, position: SIMD3<Double>, volume: Double) {
+        stopDisc()
+        discPlaying = true
+        let seed = hashString(name)
+        let roots: [Double] = [110, 130.81, 146.83, 164.81]
+        let root = roots[Int(seed % UInt32(roots.count))]
+        let melody = [0, 4, 7, 9, 7, 4, 2, 0, 7, 9, 12, 9, 7, 4, 2, -3]
+        for (index, semitone) in melody.enumerated() {
+            let frequency = root * pow(2, Double(semitone) / 12)
+            let delay = Double(index) * 0.42
+            mixer.enqueue(AudioVoice(waveform: .triangle, frequency: frequency,
+                                     duration: 0.65, attack: 0.02,
+                                     volume: min(1, volume) * 0.12, category: "records",
+                                     startDelay: delay, spatialPosition: position,
+                                     maxDistance: 56, reverbSend: 0.3))
+            if index.isMultiple(of: 4) {
+                mixer.enqueue(AudioVoice(waveform: .sine, frequency: root / 2,
+                                         duration: 1.4, attack: 0.04,
+                                         volume: min(1, volume) * 0.09, category: "records",
+                                         startDelay: delay, spatialPosition: position,
+                                         maxDistance: 56, reverbSend: 0.25))
+            }
+        }
+    }
     func addParticles(_ type: String, _ x: Double, _ y: Double, _ z: Double, _ count: Int, _ spread: Double, _ cell: Int) {
         spawnParticles(type, x: x, y: y, z: z, count: count, spread: spread, cell: cell)
     }
