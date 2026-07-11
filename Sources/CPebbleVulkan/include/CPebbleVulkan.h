@@ -163,6 +163,8 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
                                                  const PBVulkanUIDraw *ui_draws, uint32_t ui_draw_count,
                                                  float clear_red, float clear_green,
                                                  float clear_blue, float clear_alpha);
+PBVulkanStatus pb_vulkan_chunk_renderer_capture_rgba8(PBVulkanChunkRenderer *renderer,
+                                                      uint8_t *out_rgba, size_t out_size);
 void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer);
 
 #ifdef __cplusplus

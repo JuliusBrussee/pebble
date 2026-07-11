@@ -114,6 +114,15 @@ private final class VulkanChunkFrameRenderer: @unchecked Sendable {
         guard status == PB_VULKAN_OK else { throw error(status) }
     }
 
+    func captureRGBA8(byteCount: Int) throws -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: byteCount)
+        let status = bytes.withUnsafeMutableBufferPointer {
+            pb_vulkan_chunk_renderer_capture_rgba8(handle, $0.baseAddress, $0.count)
+        }
+        guard status == PB_VULKAN_OK else { throw error(status) }
+        return bytes
+    }
+
     func present(sharedUniforms: [UInt8], draws: [PBVulkanChunkDraw],
                  entityViewProjection: [UInt8], entityDraws: [PBVulkanEntityDraw],
                  particleDraws: [PBVulkanParticleDraw],
@@ -359,4 +368,10 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
     }
 
     public func waitUntilIdle() { context.waitUntilIdle() }
+
+    public func captureRGBA8() throws -> (width: Int, height: Int, pixels: [UInt8]) {
+        let count = targetSize.width * targetSize.height * 4
+        return (targetSize.width, targetSize.height,
+                try chunkRenderer.captureRGBA8(byteCount: count))
+    }
 }

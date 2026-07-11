@@ -1951,6 +1951,74 @@ PBVulkanStatus pb_vulkan_chunk_renderer_present(PBVulkanChunkRenderer *renderer,
                                             clear_red, clear_green, clear_blue, clear_alpha);
 }
 
+PBVulkanStatus pb_vulkan_chunk_renderer_capture_rgba8(PBVulkanChunkRenderer *renderer,
+                                                      uint8_t *out_rgba, size_t out_size) {
+    if (renderer == NULL || out_rgba == NULL) return PB_VULKAN_BAD_ARGUMENT;
+    PBVulkanSwapchain *swapchain = renderer->swapchain;
+    PBVulkanContext *context = swapchain->context;
+    const size_t required = (size_t)swapchain->extent.width * swapchain->extent.height * 4u;
+    if (out_size < required) return PB_VULKAN_BAD_ARGUMENT;
+    vkWaitForFences(context->device, 1, &swapchain->frame_fence, VK_TRUE, UINT64_MAX);
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    VkResult result = pbvk_buffer_create(context, required, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                                         &buffer, &memory);
+    if (result == VK_SUCCESS) result = pbvk_begin_one_time(context, &pool, &command);
+    if (result == VK_SUCCESS) {
+        VkImageMemoryBarrier to_transfer = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        to_transfer.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        to_transfer.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        to_transfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        to_transfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_transfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_transfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        to_transfer.image = swapchain->scene_image;
+        to_transfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        to_transfer.subresourceRange.levelCount = 1; to_transfer.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             0, 0, NULL, 0, NULL, 1, &to_transfer);
+        VkBufferImageCopy copy = {0};
+        copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        copy.imageSubresource.layerCount = 1;
+        copy.imageExtent.width = swapchain->extent.width;
+        copy.imageExtent.height = swapchain->extent.height;
+        copy.imageExtent.depth = 1;
+        vkCmdCopyImageToBuffer(command, swapchain->scene_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               buffer, 1, &copy);
+        VkImageMemoryBarrier to_sample = to_transfer;
+        to_sample.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        to_sample.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        to_sample.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        to_sample.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             0, 0, NULL, 0, NULL, 1, &to_sample);
+        result = pbvk_end_one_time(context, pool, command);
+        pool = VK_NULL_HANDLE;
+    }
+    void *mapped = NULL;
+    if (result == VK_SUCCESS) result = vkMapMemory(context->device, memory, 0, required, 0, &mapped);
+    if (result == VK_SUCCESS) {
+        const uint8_t *source = (const uint8_t *)mapped;
+        const int bgra = swapchain->format == VK_FORMAT_B8G8R8A8_UNORM ||
+                         swapchain->format == VK_FORMAT_B8G8R8A8_SRGB;
+        for (size_t index = 0; index < required; index += 4) {
+            out_rgba[index] = source[index + (bgra ? 2 : 0)];
+            out_rgba[index + 1] = source[index + 1];
+            out_rgba[index + 2] = source[index + (bgra ? 0 : 2)];
+            out_rgba[index + 3] = source[index + 3];
+        }
+        vkUnmapMemory(context->device, memory);
+    }
+    if (pool != VK_NULL_HANDLE) vkDestroyCommandPool(context->device, pool, NULL);
+    if (buffer != VK_NULL_HANDLE) vkDestroyBuffer(context->device, buffer, NULL);
+    if (memory != VK_NULL_HANDLE) vkFreeMemory(context->device, memory, NULL);
+    return result == VK_SUCCESS ? PB_VULKAN_OK
+        : pbvk_fail(PB_VULKAN_RENDER_FAILED, "scene capture failed", result);
+}
+
 void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
     if (renderer == NULL) return;
     PBVulkanContext *context = renderer->swapchain == NULL ? NULL : renderer->swapchain->context;
@@ -2294,7 +2362,8 @@ static PBVulkanStatus pbvk_swapchain_build(PBVulkanSwapchain *swapchain, uint32_
     scene_image.extent.width = extent.width; scene_image.extent.height = extent.height; scene_image.extent.depth = 1;
     scene_image.mipLevels = 1; scene_image.arrayLayers = 1; scene_image.samples = VK_SAMPLE_COUNT_1_BIT;
     scene_image.tiling = VK_IMAGE_TILING_OPTIMAL;
-    scene_image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    scene_image.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT |
+                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     scene_image.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     result = vkCreateImage(context->device, &scene_image, NULL, &swapchain->scene_image);
     VkMemoryRequirements scene_requirements;

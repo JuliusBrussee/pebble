@@ -221,7 +221,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "pebble_win",
-            dependencies: ["PebbleCore", "PebbleAudioCore", "PebbleRenderABI", "PebbleRendererVulkan", "PebblePlatformSDL", "PebbleNetNative", "PebbleUI", "PebbleResources"],
+            dependencies: ["PebbleCore", "PebbleAudioCore", "PebbleRenderABI", "PebbleRendererVulkan", "PebblePlatformSDL", "PebbleNetNative", "PebbleUI", "PebbleResources", "PebbleCodecs"],
             path: "Sources/pebble_win",
             swiftSettings: swift5
         ),
