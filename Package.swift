@@ -67,7 +67,7 @@ let package = Package(
         ),
         .target(
             name: "PebbleResources",
-            dependencies: ["PebbleCodecs"],
+            dependencies: ["PebbleCodecs", "PebbleCore"],
             path: "Sources/PebbleResources",
             swiftSettings: swift5
         ),

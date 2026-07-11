@@ -67,7 +67,7 @@ final class WindowsGameHost: GameHost {
         self.renderer = renderer
         self.resourcePacks = resourcePacks
         self.customSkinURL = customSkinURL
-        let built = PebbleCore.buildAtlas()
+        let built = resourcePacks.blockAtlas(fallback: PebbleCore.buildAtlas())
         atlas = try renderer.createTexture(RenderTextureData(
             width: TILE, height: TILE, layers: built.count,
             format: .rgba8Unorm, bytes: built.pixels.flatMap { $0 }))

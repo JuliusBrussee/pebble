@@ -1,5 +1,6 @@
 import Foundation
 import PebbleCodecs
+import PebbleCore
 
 public final class PortableResourcePack: @unchecked Sendable {
     private let reader: ZipReader
@@ -85,6 +86,83 @@ public final class ResourcePackStack: @unchecked Sendable {
         return entityImage(["entity/player/wide/steve.png"])
             ?? entityImage(["entity/steve.png"])
     }
+
+    public func blockAtlas(fallback: BuiltAtlas) -> BuiltAtlas {
+        let names = allTileNames()
+        guard !packs.isEmpty, fallback.pixels.count == names.count else { return fallback }
+        var slices = fallback.pixels
+        for (index, name) in names.enumerated() {
+            for candidate in blockTextureCandidates(name) {
+                guard var image = packs.lazy.compactMap({ $0.texture(candidate + ".png") }).first else { continue }
+                if image.height > image.width, image.height % image.width == 0 {
+                    image.pixels = Array(image.pixels.prefix(image.width * image.width * 4))
+                    image.height = image.width
+                }
+                guard image.width == image.height else { continue }
+                var pixels = resizeSquare(image, size: TILE)
+                if let color = bakedBlockTint[name] { tint(&pixels, color: color) }
+                slices[index] = pixels
+                break
+            }
+        }
+        return BuiltAtlas(count: slices.count, pixels: slices, missing: fallback.missing)
+    }
+}
+
+private let blockNameMap: [String: [String]] = [
+    "grass_top": ["block/grass_block_top"], "grass_side": ["block/grass_block_side"],
+    "farmland_dry": ["block/farmland"], "farmland_wet": ["block/farmland_moist"],
+    "sandstone_side": ["block/sandstone"], "red_sandstone_side": ["block/red_sandstone"],
+    "snow_block": ["block/snow"], "frosted_ice": ["block/frosted_ice_0"],
+    "dried_kelp_block": ["block/dried_kelp_side"], "magma_block": ["block/magma"],
+    "water": ["block/water_still"], "lava": ["block/lava_still"],
+    "fire": ["block/fire_0"], "soul_fire": ["block/soul_fire_0"],
+    "short_grass": ["block/short_grass", "block/grass"],
+    "bamboo": ["block/bamboo_stalk"], "bamboo_sapling": ["block/bamboo_stage0"],
+    "big_dripleaf": ["block/big_dripleaf_top"], "small_dripleaf": ["block/small_dripleaf_top"],
+    "furnace_front_lit": ["block/furnace_front_on"],
+    "blast_furnace_front_lit": ["block/blast_furnace_front_on"],
+    "smoker_front_lit": ["block/smoker_front_on"], "observer_back_lit": ["block/observer_back_on"],
+    "redstone_dust_line": ["block/redstone_dust_line0"],
+    "smoke_particle": ["particle/big_smoke_2", "particle/generic_3"],
+    "flame_particle": ["particle/flame"], "heart_particle": ["particle/heart"],
+    "crit_particle": ["particle/critical_hit"], "bubble_particle": ["particle/bubble"],
+    "note_particle": ["particle/note"], "soul_particle": ["particle/soul_1"],
+    "sweep_particle": ["particle/sweep_2"], "snow_particle": ["particle/snowflake"],
+    "portal_particle": ["particle/glow"], "slime_particle": ["item/slime_ball"],
+]
+
+private let bakedBlockTint: [String: Int] = [
+    "birch_leaves": 0x80a755, "spruce_leaves": 0x619961,
+    "redstone_dust_dot": 0xff3030, "redstone_dust_line": 0xff3030,
+]
+
+private func blockTextureCandidates(_ name: String) -> [String] {
+    if let mapped = blockNameMap[name] { return mapped }
+    if name.hasPrefix("destroy_"), let stage = Int(name.dropFirst("destroy_".count)) {
+        return ["block/destroy_stage_\(stage)"]
+    }
+    if name.hasPrefix("stem_stage") { return ["block/pumpkin_stem", "block/melon_stem"] }
+    if name.hasSuffix("_door") { return ["block/\(name)_bottom"] }
+    return ["block/\(name)"]
+}
+
+private func resizeSquare(_ image: PNGImage, size: Int) -> [UInt8] {
+    if image.width == size && image.height == size { return image.pixels }
+    var output = [UInt8](repeating: 0, count: size * size * 4)
+    for y in 0..<size {
+        let sourceY = y * image.height / size
+        for x in 0..<size {
+            let sourceX = x * image.width / size
+            let source = (sourceY * image.width + sourceX) * 4
+            let destination = (y * size + x) * 4
+            output[destination] = image.pixels[source]
+            output[destination + 1] = image.pixels[source + 1]
+            output[destination + 2] = image.pixels[source + 2]
+            output[destination + 3] = image.pixels[source + 3]
+        }
+    }
+    return output
 }
 
 private func tint(_ pixels: inout [UInt8], color: Int) {
