@@ -53,6 +53,7 @@ final class WindowsGameHost: GameHost {
     private var uiMesh: MeshHandle?
     private var breakingMesh: MeshHandle?
     private var breakingStage = -1
+    private var cubeEntityMeshes: [Int: MeshHandle] = [:]
     private var entityResources: [String: WinEntityResources] = [:]
     private var particles: [WinParticle] = []
     private var particleMesh: MeshHandle?
@@ -98,6 +99,7 @@ final class WindowsGameHost: GameHost {
         if let uiMesh { renderer.destroyMesh(uiMesh) }
         if let particleMesh { renderer.destroyMesh(particleMesh) }
         if let breakingMesh { renderer.destroyMesh(breakingMesh) }
+        for mesh in cubeEntityMeshes.values { renderer.destroyMesh(mesh) }
         for resources in entityResources.values {
             renderer.destroyMesh(resources.mesh)
             renderer.destroyTexture(resources.texture)
@@ -205,6 +207,8 @@ final class WindowsGameHost: GameHost {
         }
         appendBreakingOverlay(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
                               shared: shared, builder: &builder)
+        appendCubeEntities(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
+                           partial: partial, shared: shared, builder: &builder)
         appendEntities(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
                        partial: partial, uniforms: uniforms, builder: &builder)
         appendParticles(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
@@ -359,6 +363,74 @@ final class WindowsGameHost: GameHost {
         return RenderMeshData(vertexLayout: .chunk,
                               vertexBytes: RenderBytes.copy(vertices),
                               indexBytes: RenderBytes.copy(indices), indexFormat: .uint32)
+    }
+
+    private func appendCubeEntities(game: GameCore, cameraPosition: SIMD3<Double>, partial: Double,
+                                    shared: ChunkSharedUniforms, builder: inout FrameBuilder) {
+        for reference in game.world.entities {
+            guard let entity = reference as? Entity, !entity.dead else { continue }
+            let cell: Int
+            let emissive: Bool
+            if let falling = entity as? FallingBlockEntity {
+                cell = falling.blockCell; emissive = false
+            } else if let tnt = entity as? TNTEntity {
+                cell = Int(PebbleCore.cell(B.tnt))
+                emissive = (tnt.fuse / 5).isMultiple(of: 2)
+            } else { continue }
+            guard cell >> 4 > 0, let mesh = cubeEntityMesh(cell: cell, emissive: emissive) else { continue }
+            let x = entity.prevX + (entity.x - entity.prevX) * partial
+            let y = entity.prevY + (entity.y - entity.prevY) * partial
+            let z = entity.prevZ + (entity.z - entity.prevZ) * partial
+            let origin = SIMD4<Float>(Float(x - cameraPosition.x - 0.49),
+                                      Float(y - cameraPosition.y),
+                                      Float(z - cameraPosition.z - 0.49), 0)
+            let constants = ChunkDrawConstants(shared: shared, origin: origin)
+            let distance = Float((x - cameraPosition.x) * (x - cameraPosition.x) +
+                                 (z - cameraPosition.z) * (z - cameraPosition.z))
+            builder.addDraw(pass: .world, pipeline: .opaque, mesh: mesh,
+                            depthBucket: FrameBuilder.opaqueDepthBucket(distanceSquared: distance),
+                            indexRange: 0..<36,
+                            textures: [TextureBinding(index: 3, texture: atlas, sampler: nil)],
+                            pushConstants: RenderBytes.copy(constants))
+        }
+    }
+
+    private func cubeEntityMesh(cell: Int, emissive: Bool) -> MeshHandle? {
+        let key = cell | (emissive ? 1 << 30 : 0)
+        if let cached = cubeEntityMeshes[key] { return cached }
+        let id = cell >> 4, metadata = cell & 15
+        guard id > 0 && id < blockDefs.count else { return nil }
+        let definition = blockDefs[id]
+        let faces: [([SIMD3<Float>], Int)] = [
+            ([SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(1, 1, 0), SIMD3(0, 1, 0)], 0),
+            ([SIMD3(1, 0, 1), SIMD3(0, 0, 1), SIMD3(0, 1, 1), SIMD3(1, 1, 1)], 1),
+            ([SIMD3(0, 0, 1), SIMD3(0, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 1, 1)], 2),
+            ([SIMD3(1, 0, 0), SIMD3(1, 0, 1), SIMD3(1, 1, 1), SIMD3(1, 1, 0)], 3),
+            ([SIMD3(0, 1, 0), SIMD3(1, 1, 0), SIMD3(1, 1, 1), SIMD3(0, 1, 1)], 4),
+            ([SIMD3(0, 0, 1), SIMD3(1, 0, 1), SIMD3(1, 0, 0), SIMD3(0, 0, 0)], 5),
+        ]
+        let uvs = [SIMD2<Float>(0, 1), SIMD2<Float>(1, 1), SIMD2<Float>(1, 0), SIMD2<Float>(0, 0)]
+        var vertices: [ChunkVertex] = []
+        var indices: [UInt32] = []
+        for (corners, face) in faces {
+            let layer = definition.texFn?(metadata, face)
+                ?? (definition.tex.isEmpty ? 0 : Int(definition.tex[min(face, definition.tex.count - 1)]))
+            let light = emissive ? 15 : 10
+            let packedA = UInt32(layer) | (UInt32(face) << 12) | (3 << 15) |
+                (15 << 17) | (UInt32(light) << 21) | (emissive ? 1 << 25 : 0)
+            let base = UInt32(vertices.count)
+            for index in 0..<4 {
+                let p = corners[index], uv = uvs[index]
+                vertices.append(ChunkVertex(x: p.x, y: p.y, z: p.z, u: uv.x, v: uv.y,
+                                            a: packedA, b: 0x00ffffff))
+            }
+            indices.append(contentsOf: [base, base + 1, base + 2, base + 2, base + 3, base])
+        }
+        let data = RenderMeshData(vertexLayout: .chunk, vertexBytes: RenderBytes.copy(vertices),
+                                  indexBytes: RenderBytes.copy(indices), indexFormat: .uint32)
+        guard let mesh = try? renderer.createMesh(data) else { return nil }
+        cubeEntityMeshes[key] = mesh
+        return mesh
     }
 
     private func resourcesForEntity(_ name: String) -> WinEntityResources? {
