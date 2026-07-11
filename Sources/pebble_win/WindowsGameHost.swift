@@ -98,6 +98,8 @@ final class WindowsGameHost: GameHost {
     private var anvilName = ""
     private var grindstoneTop: ItemStack?
     private var grindstoneBottom: ItemStack?
+    private var stonecutterInput: ItemStack?
+    private var stonecutterSelection = -1
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -926,6 +928,8 @@ final class WindowsGameHost: GameHost {
                 appendAnvilScreen(game: game, width: width, height: height)
             } else if screenKind == "grindstone" {
                 appendGrindstoneScreen(game: game, width: width, height: height)
+            } else if screenKind == "stonecutter" {
+                appendStonecutterScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1399,6 +1403,35 @@ final class WindowsGameHost: GameHost {
         if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
+    private func stonecutterOptions() -> [StonecutRecipe] {
+        guard let input = stonecutterInput else { return [] }
+        return stonecuttingRecipes.filter { $0.input == itemName(input.id) }
+    }
+
+    private func appendStonecutterScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let panelWidth: Float = 406, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.105, 0.11, 0.115, 0.98))
+        _ = uiCanvas.text("STONECUTTER", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        inventorySlot(stonecutterInput, x: panelX + 26, y: panelY + 74, selected: false)
+        let options = stonecutterOptions()
+        for index in 0..<min(12, options.count) {
+            let x = panelX + 92 + Float(index % 4) * 44, y = panelY + 46 + Float(index / 4) * 44
+            uiCanvas.fillRect(x: x, y: y, width: 40, height: 40,
+                              color: index == stonecutterSelection ? SIMD4<Float>(0.45, 0.45, 0.75, 1)
+                                                                   : SIMD4<Float>(0.16, 0.17, 0.19, 1))
+            inventoryItem(ItemStack(iid(options[index].output), options[index].count), x: x + 6, y: y + 8)
+        }
+        _ = uiCanvas.text("->", x: panelX + 282, y: panelY + 92, scale: 2.3)
+        let output = stonecutterSelection >= 0 && stonecutterSelection < options.count
+            ? ItemStack(iid(options[stonecutterSelection].output), options[stonecutterSelection].count) : nil
+        inventorySlot(output, x: panelX + 334, y: panelY + 82, selected: true)
+        appendWorkstationInventory(player: player, panelX: panelX, panelY: panelY)
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func appendWorkstationInventory(player: Player, panelX: Float, panelY: Float) {
         let slot: Float = 42, inventoryY = panelY + 220
         for row in 0..<3 { for column in 0..<9 {
@@ -1479,6 +1512,10 @@ final class WindowsGameHost: GameHost {
         }
         if screenOpen, screenKind == "grindstone" {
             handleGrindstoneClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "stonecutter" {
+            handleStonecutterClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -2105,6 +2142,44 @@ final class WindowsGameHost: GameHost {
         grindstoneTop = nil; grindstoneBottom = nil
     }
 
+    private func handleStonecutterClick(button: Int, game: GameCore) {
+        guard let player = game.player else { return }
+        let panelX = (lastScreenSize.x - 406) / 2, panelY = (lastScreenSize.y - 392) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        if x >= panelX + 26, x < panelX + 64, y >= panelY + 74, y < panelY + 112 {
+            transferSlot(button: button, get: { self.stonecutterInput }, set: {
+                self.stonecutterInput = $0; self.stonecutterSelection = -1
+            })
+        } else if x >= panelX + 92, x < panelX + 268, y >= panelY + 46, y < panelY + 178 {
+            let index = Int((x - panelX - 92) / 44) + Int((y - panelY - 46) / 44) * 4
+            if index < stonecutterOptions().count { stonecutterSelection = index; playUI("ui.stonecutter.select_recipe") }
+            return
+        } else if x >= panelX + 334, x < panelX + 372, y >= panelY + 82, y < panelY + 120 {
+            let options = stonecutterOptions()
+            guard stonecutterSelection >= 0, stonecutterSelection < options.count,
+                  let input = stonecutterInput else { return }
+            let recipe = options[stonecutterSelection]
+            let output = ItemStack(iid(recipe.output), recipe.count)
+            if let carried = carriedStack {
+                guard carried.id == output.id,
+                      carried.count + output.count <= itemDef(output.id).maxStack else { return }
+                carried.count += output.count
+            } else { carriedStack = output }
+            input.count -= 1
+            if input.count <= 0 { stonecutterInput = nil; stonecutterSelection = -1 }
+            playUI("ui.stonecutter.take_result")
+        } else if let index = workstationInventoryIndex(panelX: panelX, panelY: panelY) {
+            transferSlot(button: button, get: { player.inventory[index] }, set: { player.inventory[index] = $0 })
+        } else { return }
+        playUI("ui.button.click")
+    }
+
+    private func returnStonecutterInput() {
+        guard let game = activeGame, let player = game.player, let input = stonecutterInput else { return }
+        if !player.give(input) { _ = spawnItem(game.world, player.x, player.y, player.z, input) }
+        stonecutterInput = nil; stonecutterSelection = -1
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -2228,6 +2303,7 @@ final class WindowsGameHost: GameHost {
         if screenOpen, screenKind == "enchanting", kind != "enchanting" { returnEnchantingItems() }
         if screenOpen, screenKind == "anvil", kind != "anvil" { returnAnvilItems() }
         if screenOpen, screenKind == "grindstone", kind != "grindstone" { returnGrindstoneItems() }
+        if screenOpen, screenKind == "stonecutter", kind != "stonecutter" { returnStonecutterInput() }
         screenKind = kind; screenData = data; screenOpen = true
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
@@ -2279,6 +2355,7 @@ final class WindowsGameHost: GameHost {
         if screenKind == "enchanting" { returnEnchantingItems() }
         if screenKind == "anvil" { returnAnvilItems() }
         if screenKind == "grindstone" { returnGrindstoneItems() }
+        if screenKind == "stonecutter" { returnStonecutterInput() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
