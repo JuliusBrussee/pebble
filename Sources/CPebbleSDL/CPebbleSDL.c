@@ -104,6 +104,11 @@ void pb_window_size_pixels(PBWindow *window, int32_t *out_width, int32_t *out_he
     SDL_GetWindowSizeInPixels(window->window, out_width, out_height);
 }
 
+void pb_window_size_points(PBWindow *window, int32_t *out_width, int32_t *out_height) {
+    if (window == NULL || out_width == NULL || out_height == NULL) return;
+    SDL_GetWindowSize(window->window, out_width, out_height);
+}
+
 void pb_window_set_relative_mouse(PBWindow *window, uint32_t enabled) {
     if (window != NULL) SDL_SetWindowRelativeMouseMode(window->window, enabled != 0);
 }

@@ -41,6 +41,7 @@ int32_t pb_window_create(const char *title, int32_t width, int32_t height, PBWin
 void pb_window_destroy(PBWindow *window);
 int32_t pb_window_poll_event(PBWindow *window, PBWindowEvent *out_event);
 void pb_window_size_pixels(PBWindow *window, int32_t *out_width, int32_t *out_height);
+void pb_window_size_points(PBWindow *window, int32_t *out_width, int32_t *out_height);
 void pb_window_set_relative_mouse(PBWindow *window, uint32_t enabled);
 int32_t pb_window_set_fullscreen(PBWindow *window, uint32_t enabled);
 uint32_t pb_window_is_fullscreen(PBWindow *window);

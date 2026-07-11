@@ -71,6 +71,12 @@ public final class SDLWindow: @unchecked Sendable {
         return (Int(width), Int(height))
     }
 
+    public var logicalSize: (width: Int, height: Int) {
+        var width: Int32 = 0, height: Int32 = 0
+        pb_window_size_points(handle, &width, &height)
+        return (Int(width), Int(height))
+    }
+
     public func setRelativeMouse(_ enabled: Bool) {
         pb_window_set_relative_mouse(handle, enabled ? 1 : 0)
     }

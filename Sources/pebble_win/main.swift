@@ -160,7 +160,12 @@ do {
                     game.keyUp(code)
                 }
             case .mouseMotion(let x, let y, let dx, let dy):
-                if host.hasScreen() { host.screenMouse(x: x, y: y) }
+                if host.hasScreen() {
+                    let logical = window.logicalSize, pixels = window.pixelSize
+                    let scaleX = Float(pixels.width) / Float(max(1, logical.width))
+                    let scaleY = Float(pixels.height) / Float(max(1, logical.height))
+                    host.screenMouse(x: x * scaleX, y: y * scaleY)
+                }
                 else { game.mouseDelta(Double(dx), Double(dy)) }
             case .mouseButton(let button, let pressed):
                 let mapped = button == 1 ? 0 : button == 3 ? 2 : 1
