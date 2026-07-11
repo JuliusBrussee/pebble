@@ -93,6 +93,9 @@ final class WindowsGameHost: GameHost {
     private var enchantingLapis: ItemStack?
     private var enchantingSeed = 0x504542
     private var enchantingBookshelves = 0
+    private var anvilLeft: ItemStack?
+    private var anvilRight: ItemStack?
+    private var anvilName = ""
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -917,6 +920,8 @@ final class WindowsGameHost: GameHost {
                 appendCraftingScreen(game: game, width: width, height: height)
             } else if screenKind == "enchanting" {
                 appendEnchantingScreen(game: game, width: width, height: height)
+            } else if screenKind == "anvil" {
+                appendAnvilScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1336,6 +1341,40 @@ final class WindowsGameHost: GameHost {
         if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
+    private func appendAnvilScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.1, 0.105, 0.115, 0.98))
+        _ = uiCanvas.text("REPAIR AND NAME", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        textField(anvilName + "_", x: panelX + 126, y: panelY + 42, width: 240, focused: true)
+        inventorySlot(anvilLeft, x: panelX + 34, y: panelY + 98, selected: false)
+        _ = uiCanvas.text("+", x: panelX + 88, y: panelY + 108, scale: 2.4)
+        inventorySlot(anvilRight, x: panelX + 124, y: panelY + 98, selected: false)
+        _ = uiCanvas.text("->", x: panelX + 184, y: panelY + 108, scale: 2.4)
+        let result = anvilCombine(anvilLeft, anvilRight, anvilName.isEmpty ? nil : anvilName)
+        inventorySlot(result?.out, x: panelX + 250, y: panelY + 98, selected: true)
+        if let result {
+            let affordable = player.xpLevel >= result.cost && result.cost < 40
+            _ = uiCanvas.text(result.cost >= 40 ? "TOO EXPENSIVE" : "COST \(result.cost) LEVELS",
+                              x: panelX + 304, y: panelY + 111, scale: 1.1,
+                              color: affordable ? SIMD4<Float>(0.45, 1, 0.25, 1) : SIMD4<Float>(1, 0.3, 0.3, 1))
+        }
+        let inventoryY = panelY + 220
+        for row in 0..<3 { for column in 0..<9 {
+            let index = 9 + row * 9 + column
+            inventorySlot(player.inventory[index], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + Float(row) * slot, selected: false)
+        }}
+        for column in 0..<9 {
+            inventorySlot(player.inventory[column], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + 3 * slot + 10, selected: column == player.selectedSlot)
+        }
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func inventorySlot(_ stack: ItemStack?, x: Float, y: Float, selected: Bool) {
         uiCanvas.fillRect(x: x, y: y, width: 38, height: 38,
                           color: selected ? SIMD4<Float>(0.8, 0.82, 0.9, 1)
@@ -1395,6 +1434,10 @@ final class WindowsGameHost: GameHost {
         }
         if screenOpen, screenKind == "enchanting" {
             handleEnchantingClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "anvil" {
+            handleAnvilClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -1925,6 +1968,57 @@ final class WindowsGameHost: GameHost {
         enchantingItem = nil; enchantingLapis = nil
     }
 
+    private func handleAnvilClick(button: Int, game: GameCore) {
+        guard let player = game.player else { return }
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28, panelHeight: Float = 392
+        let panelX = (lastScreenSize.x - panelWidth) / 2, panelY = (lastScreenSize.y - panelHeight) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        if x >= panelX + 34, x < panelX + 72, y >= panelY + 98, y < panelY + 136 {
+            transferSlot(button: button, get: { self.anvilLeft },
+                         set: { self.anvilLeft = $0; self.anvilName = $0?.label ?? "" })
+        } else if x >= panelX + 124, x < panelX + 162, y >= panelY + 98, y < panelY + 136 {
+            transferSlot(button: button, get: { self.anvilRight }, set: { self.anvilRight = $0 })
+        } else if x >= panelX + 250, x < panelX + 288, y >= panelY + 98, y < panelY + 136 {
+            guard let result = anvilCombine(anvilLeft, anvilRight, anvilName.isEmpty ? nil : anvilName),
+                  result.cost < 40, player.xpLevel >= result.cost else { return }
+            if let carried = carriedStack {
+                guard carried.id == result.out.id,
+                      carried.count + result.out.count <= itemDef(result.out.id).maxStack else { return }
+                carried.count += result.out.count
+            } else { carriedStack = result.out.copy() }
+            player.takeLevels(result.cost)
+            anvilLeft = nil
+            if let units = result.out.data.repairUnits, let right = anvilRight, right.count > units {
+                right.count -= units
+            } else { anvilRight = nil }
+            carriedStack?.data.repairUnits = nil
+            game.advance("use_anvil")
+            playUI("block.anvil.use")
+        } else {
+            let inventoryX = panelX + 14, inventoryY = panelY + 220
+            let column = Int((x - inventoryX) / slot)
+            guard x >= inventoryX, column >= 0, column < 9,
+                  (x - inventoryX).truncatingRemainder(dividingBy: slot) < 38 else { return }
+            let row = Int((y - inventoryY) / slot)
+            let index: Int
+            if y >= inventoryY, row >= 0, row < 3,
+               (y - inventoryY).truncatingRemainder(dividingBy: slot) < 38 { index = 9 + row * 9 + column }
+            else if y >= inventoryY + 3 * slot + 10, y < inventoryY + 3 * slot + 48 { index = column }
+            else { return }
+            transferSlot(button: button, get: { player.inventory[index] }, set: { player.inventory[index] = $0 })
+        }
+        playUI("ui.button.click")
+    }
+
+    private func returnAnvilItems() {
+        guard let game = activeGame, let player = game.player else { return }
+        for stack in [anvilLeft, anvilRight].compactMap({ $0 }) {
+            if !player.give(stack) { _ = spawnItem(game.world, player.x, player.y, player.z, stack) }
+        }
+        anvilLeft = nil; anvilRight = nil; anvilName = ""
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -2046,6 +2140,7 @@ final class WindowsGameHost: GameHost {
         if screenOpen, (screenKind == "inventory" || screenKind == "creative"),
            kind != screenKind { returnInventoryCraftingGrid() }
         if screenOpen, screenKind == "enchanting", kind != "enchanting" { returnEnchantingItems() }
+        if screenOpen, screenKind == "anvil", kind != "anvil" { returnAnvilItems() }
         screenKind = kind; screenData = data; screenOpen = true
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
@@ -2095,6 +2190,7 @@ final class WindowsGameHost: GameHost {
         if screenKind == "crafting" { returnCraftingGrid() }
         if screenKind == "inventory" || screenKind == "creative" { returnInventoryCraftingGrid() }
         if screenKind == "enchanting" { returnEnchantingItems() }
+        if screenKind == "anvil" { returnAnvilItems() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
@@ -2107,6 +2203,8 @@ final class WindowsGameHost: GameHost {
             } else if createWorldField == 1, createWorldSeed.count < 64 {
                 createWorldSeed.append(contentsOf: filtered.prefix(64 - createWorldSeed.count))
             }
+        } else if screenOpen, screenKind == "anvil" {
+            if anvilName.count < 48 { anvilName.append(contentsOf: filtered.prefix(48 - anvilName.count)) }
         } else if screenOpen, screenKind == "multiplayer" {
             multiplayerMessage = ""
             if multiplayerField == 0, multiplayerAddress.count < 128 {
@@ -2152,6 +2250,9 @@ final class WindowsGameHost: GameHost {
         } else if screenKind == "multiplayer", code == "Enter" {
             connectFromForm(game: game)
             return !screenOpen
+        } else if screenKind == "anvil", code == "Backspace" {
+            if !anvilName.isEmpty { anvilName.removeLast() }
+            return false
         } else if screenKind == "title", code == "Enter" {
             let worlds = game.listWorlds()
             if worlds.isEmpty {
