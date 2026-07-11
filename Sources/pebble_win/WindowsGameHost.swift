@@ -89,6 +89,10 @@ final class WindowsGameHost: GameHost {
     private weak var activeGame: GameCore?
     private var craftingGrid: [ItemStack?] = Array(repeating: nil, count: 9)
     private var inventoryCraftingGrid: [ItemStack?] = Array(repeating: nil, count: 4)
+    private var enchantingItem: ItemStack?
+    private var enchantingLapis: ItemStack?
+    private var enchantingSeed = 0x504542
+    private var enchantingBookshelves = 0
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -911,6 +915,8 @@ final class WindowsGameHost: GameHost {
                 appendActionScreen(game: game, width: width, height: height)
             } else if screenKind == "crafting" {
                 appendCraftingScreen(game: game, width: width, height: height)
+            } else if screenKind == "enchanting" {
+                appendEnchantingScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1286,6 +1292,50 @@ final class WindowsGameHost: GameHost {
         if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
+    private func appendEnchantingScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.1, 0.08, 0.15, 0.98))
+        _ = uiCanvas.text("ENCHANTING", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        inventorySlot(enchantingItem, x: panelX + 28, y: panelY + 66, selected: true)
+        inventorySlot(enchantingLapis, x: panelX + 28, y: panelY + 116, selected: false)
+        let options = enchantingOptions(enchantingItem, enchantingBookshelves, enchantingSeed)
+        for index in 0..<3 {
+            let option = index < options.count ? options[index] : nil
+            let y = panelY + 48 + Float(index) * 50
+            let affordable = option.map { player.xpLevel >= $0.level && (enchantingLapis?.count ?? 0) >= $0.lapis } ?? false
+            let hovered = screenMousePosition.x >= panelX + 96 && screenMousePosition.x < panelX + 364 &&
+                          screenMousePosition.y >= y && screenMousePosition.y < y + 40
+            uiCanvas.fillRect(x: panelX + 96, y: y, width: 268, height: 40,
+                              color: affordable ? (hovered ? SIMD4<Float>(0.4, 0.27, 0.58, 1)
+                                                           : SIMD4<Float>(0.28, 0.18, 0.42, 1))
+                                                : SIMD4<Float>(0.13, 0.12, 0.16, 1))
+            if let option {
+                let preview = option.preview.map { $0.id.replacingOccurrences(of: "_", with: " ").uppercased() } ?? "UNKNOWN"
+                _ = uiCanvas.text(preview, x: panelX + 106, y: y + 8, scale: 1.15,
+                                  color: affordable ? SIMD4<Float>(0.85, 0.76, 1, 1) : SIMD4<Float>(0.42, 0.4, 0.45, 1))
+                _ = uiCanvas.text("XP \(option.level)  LAPIS \(option.lapis)", x: panelX + 248, y: y + 23,
+                                  scale: 0.9, color: affordable ? SIMD4<Float>(0.5, 1, 0.25, 1) : SIMD4<Float>(0.35, 0.4, 0.3, 1))
+            }
+        }
+        _ = uiCanvas.text("BOOKSHELVES \(enchantingBookshelves)", x: panelX + 98, y: panelY + 202,
+                          scale: 1.1, color: SIMD4<Float>(0.64, 0.58, 0.75, 1))
+        let inventoryY = panelY + 220
+        for row in 0..<3 { for column in 0..<9 {
+            let index = 9 + row * 9 + column
+            inventorySlot(player.inventory[index], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + Float(row) * slot, selected: false)
+        }}
+        for column in 0..<9 {
+            inventorySlot(player.inventory[column], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + 3 * slot + 10, selected: column == player.selectedSlot)
+        }
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func inventorySlot(_ stack: ItemStack?, x: Float, y: Float, selected: Bool) {
         uiCanvas.fillRect(x: x, y: y, width: 38, height: 38,
                           color: selected ? SIMD4<Float>(0.8, 0.82, 0.9, 1)
@@ -1341,6 +1391,10 @@ final class WindowsGameHost: GameHost {
         }
         if screenOpen, (screenKind == "inventory" || screenKind == "creative") {
             handlePlayerInventoryClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "enchanting" {
+            handleEnchantingClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -1818,6 +1872,59 @@ final class WindowsGameHost: GameHost {
         }
     }
 
+    private func handleEnchantingClick(button: Int, game: GameCore) {
+        guard let player = game.player else { return }
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28, panelHeight: Float = 392
+        let panelX = (lastScreenSize.x - panelWidth) / 2, panelY = (lastScreenSize.y - panelHeight) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        if x >= panelX + 96, x < panelX + 364, y >= panelY + 48, y < panelY + 188 {
+            let index = Int((y - panelY - 48) / 50)
+            let options = enchantingOptions(enchantingItem, enchantingBookshelves, enchantingSeed)
+            if index < options.count, let item = enchantingItem {
+                let option = options[index]
+                if player.xpLevel >= option.level, (enchantingLapis?.count ?? 0) >= option.lapis {
+                    enchantingItem = applyEnchanting(item, option)
+                    enchantingLapis?.count -= option.lapis
+                    if enchantingLapis?.count ?? 0 <= 0 { enchantingLapis = nil }
+                    player.takeLevels(option.lapis)
+                    enchantingSeed = enchantingSeed &* 1664525 &+ 1013904223
+                    game.advance("enchant_item")
+                    playUI("block.enchantment_table.use")
+                }
+            }
+            return
+        }
+        if x >= panelX + 28, x < panelX + 66, y >= panelY + 66, y < panelY + 104 {
+            transferSlot(button: button, get: { self.enchantingItem }, set: { self.enchantingItem = $0 })
+        } else if x >= panelX + 28, x < panelX + 66, y >= panelY + 116, y < panelY + 154 {
+            if let carried = carriedStack, itemName(carried.id) != "lapis_lazuli" { return }
+            transferSlot(button: button, get: { self.enchantingLapis }, set: { self.enchantingLapis = $0 })
+        } else {
+            let inventoryX = panelX + 14, inventoryY = panelY + 220
+            let column = Int((x - inventoryX) / slot)
+            guard x >= inventoryX, column >= 0, column < 9,
+                  (x - inventoryX).truncatingRemainder(dividingBy: slot) < 38 else { return }
+            let row = Int((y - inventoryY) / slot)
+            let inventoryIndex: Int
+            if y >= inventoryY, row >= 0, row < 3,
+               (y - inventoryY).truncatingRemainder(dividingBy: slot) < 38 { inventoryIndex = 9 + row * 9 + column }
+            else if y >= inventoryY + 3 * slot + 10, y < inventoryY + 3 * slot + 48 { inventoryIndex = column }
+            else { return }
+            transferSlot(button: button, get: { player.inventory[inventoryIndex] },
+                         set: { player.inventory[inventoryIndex] = $0 })
+        }
+        playUI("ui.button.click")
+    }
+
+    private func returnEnchantingItems() {
+        guard let game = activeGame, let player = game.player else { return }
+        for stack in [enchantingItem, enchantingLapis].compactMap({ $0 }) {
+            if !player.give(stack) { _ = spawnItem(game.world, player.x, player.y, player.z, stack) }
+        }
+        enchantingItem = nil; enchantingLapis = nil
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -1938,7 +2045,19 @@ final class WindowsGameHost: GameHost {
         if screenOpen, screenKind == "crafting", kind != "crafting" { returnCraftingGrid() }
         if screenOpen, (screenKind == "inventory" || screenKind == "creative"),
            kind != screenKind { returnInventoryCraftingGrid() }
+        if screenOpen, screenKind == "enchanting", kind != "enchanting" { returnEnchantingItems() }
         screenKind = kind; screenData = data; screenOpen = true
+        if kind == "enchanting", let game = activeGame {
+            var shelves = 0
+            let x = data?.x ?? 0, y = data?.y ?? 0, z = data?.z ?? 0
+            for dz in -2...2 { for dx in -2...2 where abs(dx) == 2 || abs(dz) == 2 {
+                for dy in 0...1 where (game.world.getBlock(x + dx, y + dy, z + dz) >> 4) == Int(B.bookshelf) {
+                    shelves += 1
+                }
+            }}
+            enchantingBookshelves = min(15, shelves)
+            enchantingSeed = (x &* 73428767) ^ (y &* 912931) ^ (z &* 438289)
+        }
         if kind == "sign" {
             signLine = 0
             if screenData?.be?.lines == nil { screenData?.be?.lines = ["", "", "", ""] }
@@ -1975,6 +2094,7 @@ final class WindowsGameHost: GameHost {
     func closeAllScreens() {
         if screenKind == "crafting" { returnCraftingGrid() }
         if screenKind == "inventory" || screenKind == "creative" { returnInventoryCraftingGrid() }
+        if screenKind == "enchanting" { returnEnchantingItems() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
