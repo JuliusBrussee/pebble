@@ -73,6 +73,7 @@ final class WindowsGameHost: GameHost {
     private var screenMessage = ""
     private(set) var exitRequested = false
     private var screenReturnKind = "title"
+    private weak var tradingMob: Mob?
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -600,6 +601,8 @@ final class WindowsGameHost: GameHost {
                 appendTitleScreen(game: game, width: width, height: height)
             } else if screenKind == "options" {
                 appendOptionsScreen(game: game, width: width, height: height)
+            } else if screenKind == "trading" {
+                appendTradingScreen(game: game, width: width, height: height)
             } else if screenKind == "pause" || screenKind == "death" {
                 appendActionScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
@@ -636,6 +639,35 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendTradingScreen(game: GameCore, width: Float, height: Float) {
+        let offers = currentTradeOffers()
+        let panelWidth: Float = 470
+        let panelHeight = min(height - 40, Float(max(1, offers.count)) * 46 + 82)
+        let x = (width - panelWidth) / 2
+        let y = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: x, y: y, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.1, 0.11, 0.14, 0.98))
+        let profession = (tradingMob as? Villager)?.profession ?? "wandering trader"
+        _ = uiCanvas.text("TRADING - \(profession.uppercased())", x: x + 16, y: y + 14, scale: 1.7)
+        for (index, offer) in offers.prefix(8).enumerated() {
+            let rowY = y + 48 + Float(index) * 46
+            let hovered = screenMousePosition.x >= x + 14 && screenMousePosition.x < x + panelWidth - 14 &&
+                          screenMousePosition.y >= rowY && screenMousePosition.y < rowY + 38
+            let exhausted = offer.uses >= offer.maxUses
+            uiCanvas.fillRect(x: x + 14, y: rowY, width: panelWidth - 28, height: 38,
+                              color: exhausted ? SIMD4<Float>(0.28, 0.08, 0.08, 0.9)
+                                  : hovered ? SIMD4<Float>(0.25, 0.34, 0.28, 1)
+                                            : SIMD4<Float>(0.16, 0.18, 0.21, 1))
+            let first = "\(offer.buyA.count) \(itemName(offer.buyA.id).uppercased())"
+            let second = offer.buyB.map { " + \($0.count) \(itemName($0.id).uppercased())" } ?? ""
+            let result = "\(offer.sell.count) \(itemName(offer.sell.id).uppercased())"
+            _ = uiCanvas.text(first + second, x: x + 24, y: rowY + 12, scale: 1.15,
+                              color: SIMD4<Float>(0.82, 0.88, 0.82, 1))
+            _ = uiCanvas.text("-> " + result, x: x + 272, y: rowY + 12, scale: 1.15,
+                              color: SIMD4<Float>(0.95, 0.86, 0.42, 1))
+        }
     }
 
     private func appendOptionsScreen(game: GameCore, width: Float, height: Float) {
@@ -806,6 +838,10 @@ final class WindowsGameHost: GameHost {
     func screenMouse(x: Float, y: Float) { screenMousePosition = SIMD2<Float>(x, y) }
 
     func screenMouseButton(_ button: Int, game: GameCore) {
+        if button == 0, screenOpen, screenKind == "trading" {
+            handleTradeClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "options" {
             handleOptionsClick(game: game)
             return
@@ -858,6 +894,55 @@ final class WindowsGameHost: GameHost {
             }
         }
         playUI("ui.button.click")
+    }
+
+    private func currentTradeOffers() -> [TradeOffer] {
+        (tradingMob as? Villager)?.offers ?? (tradingMob as? WanderingTrader)?.offers ?? []
+    }
+
+    private func handleTradeClick(game: GameCore) {
+        guard let player = game.player else { return }
+        let offers = currentTradeOffers()
+        let panelWidth: Float = 470
+        let panelHeight = min(lastScreenSize.y - 40, Float(max(1, offers.count)) * 46 + 82)
+        let x = (lastScreenSize.x - panelWidth) / 2
+        let y = (lastScreenSize.y - panelHeight) / 2
+        guard screenMousePosition.x >= x + 14 && screenMousePosition.x < x + panelWidth - 14 else { return }
+        let index = Int((screenMousePosition.y - (y + 48)) / 46)
+        guard index >= 0 && index < min(8, offers.count) else { return }
+        let offer = offers[index]
+        guard offer.uses < offer.maxUses,
+              inventoryCount(player, id: offer.buyA.id) >= offer.buyA.count,
+              offer.buyB.map({ inventoryCount(player, id: $0.id) >= $0.count }) ?? true else {
+            playUI("entity.villager.no"); return
+        }
+        consumeInventory(player, id: offer.buyA.id, count: offer.buyA.count)
+        if let second = offer.buyB { consumeInventory(player, id: second.id, count: second.count) }
+        if !player.give(offer.sell.copy()) {
+            _ = spawnItem(game.world, player.x, player.y, player.z, offer.sell.copy())
+        }
+        if let villager = tradingMob as? Villager {
+            villager.offers[index].uses += 1
+            villager.addTradeXP(offer.xp)
+        } else if let trader = tradingMob as? WanderingTrader {
+            trader.offers[index].uses += 1
+        }
+        game.advance("trade_villager")
+        playUI("entity.villager.yes")
+    }
+
+    private func inventoryCount(_ player: Player, id: Int) -> Int {
+        player.inventory.compactMap { $0 }.filter { $0.id == id }.reduce(0) { $0 + $1.count }
+    }
+
+    private func consumeInventory(_ player: Player, id: Int, count: Int) {
+        var remaining = count
+        for index in player.inventory.indices where remaining > 0 {
+            guard let stack = player.inventory[index], stack.id == id else { continue }
+            let take = min(remaining, stack.count)
+            stack.count -= take; remaining -= take
+            if stack.count <= 0 { player.inventory[index] = nil }
+        }
     }
 
     private func handleTitleClick(game: GameCore) {
@@ -1124,13 +1209,15 @@ final class WindowsGameHost: GameHost {
     func openScreen(_ kind: String, _ data: ScreenData?) {
         screenKind = kind; screenData = data; screenOpen = true
     }
-    func openTrading(_ villager: Mob) { screenOpen = true }
+    func openTrading(_ villager: Mob) { tradingMob = villager; screenKind = "trading"; screenOpen = true }
     func openVehicleChest(_ kind: String, _ vehicle: Entity) { screenOpen = true }
     func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
     func openDeathScreen(_ message: String) { screenKind = "death"; screenMessage = message; screenOpen = true }
     func openPauseScreen() { screenKind = "pause"; screenOpen = true }
     func openTitleScreen() { screenKind = "title"; screenOpen = true }
-    func closeAllScreens() { screenOpen = false; textBuffer = ""; screenData = nil }
+    func closeAllScreens() {
+        screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
+    }
     func screenText(_ text: String) {
         guard screenOpen, screenKind == "chat", textBuffer.count < 256 else { return }
         textBuffer.append(contentsOf: text.filter { $0 != "\n" && $0 != "\r" && $0 != "\t" })
