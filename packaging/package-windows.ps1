@@ -18,7 +18,10 @@ if (-not $SkipBuild) {
     } finally { Pop-Location }
 }
 
-$Bin = Join-Path $Root ".build/$Configuration"
+Push-Location $Root
+try { $Bin = (swift build -c $Configuration --show-bin-path).Trim() }
+finally { Pop-Location }
+if (-not $Bin -or -not (Test-Path $Bin)) { throw "SwiftPM binary directory not found: $Bin" }
 $ShaderOutput = Join-Path $Bin "vulkan-shaders"
 New-Item $ShaderOutput -ItemType Directory -Force | Out-Null
 $GlslcCommand = Get-Command glslc -ErrorAction SilentlyContinue
@@ -76,6 +79,17 @@ $RuntimeDLLs = $RuntimeDLLs | Sort-Object FullName -Unique
 if ($RuntimeDLLs.Count -eq 0) { throw "Swift runtime DLL closure is empty" }
 foreach ($DLL in $RuntimeDLLs) { Copy-Item $DLL.FullName (Join-Path $OutputDirectory $DLL.Name) }
 
+$MSVCRuntimeNames = @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")
+foreach ($Name in $MSVCRuntimeNames) {
+    $Candidates = @(
+        (Join-Path $Bin $Name),
+        (Join-Path $env:SystemRoot "System32/$Name"),
+        $(if ($env:VCToolsRedistDir) { Join-Path $env:VCToolsRedistDir "x64/Microsoft.VC143.CRT/$Name" } else { "" })
+    ) | Where-Object { $_ -and (Test-Path $_) }
+    if ($Candidates.Count -eq 0) { throw "MSVC runtime dependency missing: $Name" }
+    Copy-Item $Candidates[0] (Join-Path $OutputDirectory $Name)
+}
+
 $Required = @(
     "Pebble.exe", "pebserver.exe", "SDL3.dll", "README-WINDOWS.txt",
     "assets/logo.png", "assets/title-bg.png", "assets/Faithful 32x - 1.20.1.zip",
@@ -84,7 +98,17 @@ $Required = @(
 foreach ($Relative in $Required) {
     if (-not (Test-Path (Join-Path $OutputDirectory $Relative))) { throw "package verification missing: $Relative" }
 }
-if ((Get-ChildItem (Join-Path $OutputDirectory "shaders") -Filter "*.spv").Count -eq 0) { throw "package verification missing Vulkan shaders" }
+$RequiredShaders = @(
+    "chunk.vert.spv", "chunk.frag.spv", "shadow.vert.spv", "entity.vert.spv", "entity.frag.spv",
+    "particle.vert.spv", "particle.frag.spv", "sky.vert.spv", "sky.frag.spv", "ui.vert.spv",
+    "ui.frag.spv", "fullscreen.vert.spv", "composite.frag.spv"
+)
+foreach ($Shader in $RequiredShaders) {
+    if (-not (Test-Path (Join-Path $OutputDirectory "shaders/$Shader"))) { throw "package verification missing shader: $Shader" }
+}
+foreach ($Name in $MSVCRuntimeNames) {
+    if (-not (Test-Path (Join-Path $OutputDirectory $Name))) { throw "package verification missing runtime: $Name" }
+}
 
 $Archive = Join-Path (Split-Path -Parent $OutputDirectory) "Pebble-windows-x64-$Version.zip"
 Remove-Item $Archive -Force -ErrorAction SilentlyContinue

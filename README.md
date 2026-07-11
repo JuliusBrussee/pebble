@@ -23,9 +23,9 @@ Pebble is an original fan re-creation inspired by Minecraft: Java Edition 1.20. 
 
 ## ⬇ Download
 
-**[Download Pebble for Mac — latest release](../../releases/latest)** — unzip, drag `Pebble.app` into your Applications folder, and launch. If macOS says it's from an unknown developer: **System Settings → Privacy & Security → "Open Anyway"** (the app is open source and built from exactly this code — you can also build it yourself with one command, see [Install](#install--run)).
+**[Download Pebble for Mac — latest release](../../releases/latest)** — unzip, drag `Pebble.app` into your Applications folder, and launch. Windows client/package source now exists but remains experimental until published Windows runtime evidence is available; CI artifacts are not yet a release recommendation.
 
-Pebble is **macOS-only** (Apple silicon). The renderer is hand-written in Metal — Apple's graphics API — so Windows and Linux can't run it without a full renderer port.
+The shipped release remains macOS-first. A native Windows x64 client now uses SDL3, Vulkan 1.2, portable audio, resources, networking, and directory persistence. It is deliberately labeled experimental until exercised on matching hardware in CI.
 
 > **Pebble 1.1.0 is a beta.** The engine is pinned by 512 golden regression checks, but a game of this scope absolutely has bugs we haven't found yet — we just don't know where they are. If you hit one, [opening an issue](../../issues) would mean the world to us, and a pull request with a fix even more. See [Reporting bugs & contributing](#reporting-bugs--contributing) for what to include.
 
@@ -41,7 +41,7 @@ Pebble is **macOS-only** (Apple silicon). The renderer is hand-written in Metal 
 | Entity types | 100 (55+ mobs with full AI, vehicles, projectiles) |
 | Structures | 19 types, 30+ variants (villages, strongholds, bastions, end cities, ancient cities…) |
 | Golden regression checks | 512, all green (`pebble test`) |
-| Renderer | Metal, 15+ passes, runtime-compiled MSL |
+| Renderer | Metal on macOS; experimental Vulkan/SDL3 path on Windows |
 | Textures | [Faithful 32x](https://faithfulpack.net) by the Faithful team (third-party, fully credited) |
 | Audio assets | 0 — fully synthesized (AVAudioSourceNode + biquad filters) |
 | Performance | 200+ fps at full fancy settings on an Apple-silicon MacBook Air |
@@ -179,4 +179,4 @@ Pebble is provided "as is", without warranty of any kind (see [LICENSE](LICENSE)
 
 ---
 
-<p align="center"><em>Multiplayer BUT only for mac users, for now.</em></p>
+<p align="center"><em>macOS shipped; Windows port experimental.</em></p>
