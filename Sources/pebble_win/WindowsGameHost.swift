@@ -60,6 +60,7 @@ final class WindowsGameHost: GameHost {
     private var actionBarFrames = 0
     private var chatLines: [String] = []
     private var bossBars: [BossBarInfo] = []
+    private var toasts: [(definition: AdvancementDef, frames: Int)] = []
     private let resourcePacks: ResourcePackStack
     private let customSkinURL: URL
     private var musicMood = ""
@@ -724,6 +725,22 @@ final class WindowsGameHost: GameHost {
             _ = uiCanvas.text(line, x: 12, y: height - 145 - Float(index) * 14, scale: 1.1,
                               color: SIMD4<Float>(0.95, 0.95, 0.98, 0.95))
         }
+        if !toasts.isEmpty {
+            let toast = toasts[0]
+            let toastWidth: Float = 330
+            let x = width - toastWidth - 18
+            let y: Float = 18
+            let accent: SIMD4<Float> = toast.definition.frame == "challenge"
+                ? SIMD4<Float>(0.72, 0.28, 0.82, 1) : SIMD4<Float>(0.9, 0.65, 0.18, 1)
+            uiCanvas.fillRect(x: x, y: y, width: toastWidth, height: 58,
+                              color: SIMD4<Float>(0.045, 0.05, 0.065, 0.96))
+            uiCanvas.fillRect(x: x, y: y, width: 5, height: 58, color: accent)
+            _ = uiCanvas.text(toast.definition.frame == "challenge" ? "CHALLENGE COMPLETE" : "ADVANCEMENT MADE",
+                              x: x + 16, y: y + 9, scale: 1.15, color: accent)
+            _ = uiCanvas.text(toast.definition.title, x: x + 16, y: y + 31, scale: 1.7)
+            toasts[0].frames += 1
+            if toasts[0].frames > 240 { toasts.removeFirst() }
+        }
     }
 
     private func meter(x: Float, y: Float, width: Float, ratio: Float,
@@ -784,7 +801,11 @@ final class WindowsGameHost: GameHost {
         if chatLines.count > 100 { chatLines.removeFirst(chatLines.count - 100) }
         print(line)
     }
-    func pushToast(_ adv: AdvancementDef) {}
+    func pushToast(_ adv: AdvancementDef) {
+        toasts.append((adv, 0))
+        if toasts.count > 8 { toasts.removeFirst(toasts.count - 8) }
+        playUI("ui.toast.challenge_complete")
+    }
     func setBossBars(_ bars: [BossBarInfo]) { bossBars = bars }
 
     func playSound(_ name: String, _ x: Double, _ y: Double, _ z: Double, _ volume: Double, _ pitch: Double) {
