@@ -11,7 +11,7 @@ public enum WindowEvent: Sendable {
     case quit
     case resized(width: Int, height: Int)
     case key(scancode: Int, pressed: Bool, repeatEvent: Bool)
-    case mouseMotion(dx: Float, dy: Float)
+    case mouseMotion(x: Float, y: Float, dx: Float, dy: Float)
     case mouseButton(button: Int, pressed: Bool)
     case mouseWheel(x: Float, y: Float)
     case text(String)
@@ -108,7 +108,8 @@ public final class SDLWindow: @unchecked Sendable {
             case PB_WINDOW_EVENT_RESIZED: return .resized(width: Int(event.a), height: Int(event.b))
             case PB_WINDOW_EVENT_KEY_DOWN: return .key(scancode: Int(event.a), pressed: true, repeatEvent: event.b != 0)
             case PB_WINDOW_EVENT_KEY_UP: return .key(scancode: Int(event.a), pressed: false, repeatEvent: false)
-            case PB_WINDOW_EVENT_MOUSE_MOTION: return .mouseMotion(dx: event.x, dy: event.y)
+            case PB_WINDOW_EVENT_MOUSE_MOTION:
+                return .mouseMotion(x: Float(event.a), y: Float(event.b), dx: event.x, dy: event.y)
             case PB_WINDOW_EVENT_MOUSE_BUTTON_DOWN: return .mouseButton(button: Int(event.a), pressed: true)
             case PB_WINDOW_EVENT_MOUSE_BUTTON_UP: return .mouseButton(button: Int(event.a), pressed: false)
             case PB_WINDOW_EVENT_MOUSE_WHEEL: return .mouseWheel(x: event.x, y: event.y)

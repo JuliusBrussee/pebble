@@ -64,6 +64,9 @@ final class WindowsGameHost: GameHost {
     private var musicMood = ""
     private var musicCooldown = 0
     private var discPlaying = false
+    private var screenMousePosition = SIMD2<Float>(0, 0)
+    private var carriedStack: ItemStack?
+    private var lastScreenSize = SIMD2<Float>(1, 1)
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -446,6 +449,7 @@ final class WindowsGameHost: GameHost {
 
     private func appendUI(game: GameCore, target: RenderTarget, builder: inout FrameBuilder) {
         let width = Float(target.width), height = Float(target.height)
+        lastScreenSize = SIMD2<Float>(width, height)
         uiCanvas.begin(width: width, height: height)
         if screenOpen {
             uiCanvas.fillRect(x: 0, y: 0, width: width, height: height,
@@ -455,6 +459,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(0.03, 0.04, 0.06, 0.92))
                 _ = uiCanvas.text("> " + textBuffer + "_", x: 24, y: height - 48, scale: 2,
                                   color: SIMD4<Float>(1, 1, 1, 1))
+            } else if screenKind == "inventory" || screenKind == "creative" {
+                appendInventoryScreen(game: game, width: width, height: height)
             } else {
                 uiCanvas.textCentered(screenKind == "pause" ? "GAME PAUSED" : screenKind.uppercased(),
                                       centerX: width / 2, y: height / 2 - 36,
@@ -485,6 +491,112 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendInventoryScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28
+        let panelHeight: Float = 236
+        let panelX = (width - panelWidth) / 2
+        let panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.1, 0.11, 0.14, 0.97))
+        _ = uiCanvas.text(screenKind == "creative" ? "CREATIVE INVENTORY" : "INVENTORY",
+                          x: panelX + 14, y: panelY + 12, scale: 1.8)
+        let gridX = panelX + 14
+        let mainY = panelY + 48
+        for row in 0..<3 {
+            for column in 0..<9 {
+                let inventoryIndex = 9 + row * 9 + column
+                inventorySlot(player.inventory[inventoryIndex], x: gridX + Float(column) * slot,
+                              y: mainY + Float(row) * slot, selected: false)
+            }
+        }
+        let hotbarY = panelY + 182
+        for column in 0..<9 {
+            inventorySlot(player.inventory[column], x: gridX + Float(column) * slot,
+                          y: hotbarY, selected: column == player.selectedSlot)
+        }
+        if let carriedStack {
+            inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6)
+        }
+    }
+
+    private func inventorySlot(_ stack: ItemStack?, x: Float, y: Float, selected: Bool) {
+        uiCanvas.fillRect(x: x, y: y, width: 38, height: 38,
+                          color: selected ? SIMD4<Float>(0.8, 0.82, 0.9, 1)
+                                          : SIMD4<Float>(0.025, 0.03, 0.04, 0.95))
+        uiCanvas.fillRect(x: x + 2, y: y + 2, width: 34, height: 34,
+                          color: SIMD4<Float>(0.16, 0.17, 0.2, 1))
+        if let stack { inventoryItem(stack, x: x + 4, y: y + 7) }
+    }
+
+    private func inventoryItem(_ stack: ItemStack, x: Float, y: Float) {
+        let name = itemName(stack.id).split(separator: "_").map { String($0.prefix(1)) }.joined()
+        _ = uiCanvas.text(String(name.prefix(4)), x: x, y: y, scale: 1.3,
+                          color: stack.ench.isEmpty ? SIMD4<Float>(0.92, 0.93, 0.96, 1)
+                                                   : SIMD4<Float>(0.72, 0.5, 1, 1))
+        if stack.count > 1 {
+            _ = uiCanvas.text("\(stack.count)", x: x + 18, y: y + 17, scale: 1,
+                              color: SIMD4<Float>(1, 1, 1, 1))
+        }
+    }
+
+    func screenMouse(x: Float, y: Float) { screenMousePosition = SIMD2<Float>(x, y) }
+
+    func screenMouseButton(_ button: Int, game: GameCore) {
+        guard screenOpen, (screenKind == "inventory" || screenKind == "creative"),
+              let player = game.player, let slotIndex = inventorySlotAtMouse() else { return }
+        if button == 0 {
+            let old = player.inventory[slotIndex]
+            player.inventory[slotIndex] = carriedStack
+            carriedStack = old
+        } else if button == 2 {
+            if carriedStack == nil, let stack = player.inventory[slotIndex] {
+                let take = (stack.count + 1) / 2
+                carriedStack = stack.copy()
+                carriedStack?.count = take
+                stack.count -= take
+                if stack.count <= 0 { player.inventory[slotIndex] = nil }
+            } else if let carried = carriedStack {
+                if let destination = player.inventory[slotIndex], destination.id == carried.id,
+                   destination.count < itemDef(destination.id).maxStack {
+                    destination.count += 1
+                    carried.count -= 1
+                } else if player.inventory[slotIndex] == nil {
+                    let one = carried.copy(); one.count = 1
+                    player.inventory[slotIndex] = one
+                    carried.count -= 1
+                }
+                if carried.count <= 0 { carriedStack = nil }
+            }
+        }
+        playUI("ui.button.click")
+    }
+
+    private func inventorySlotAtMouse() -> Int? {
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28
+        let panelHeight: Float = 236
+        let panelX = (lastScreenSize.x - panelWidth) / 2
+        let panelY = (lastScreenSize.y - panelHeight) / 2
+        let gridX = panelX + 14
+        let x = screenMousePosition.x - gridX
+        guard x >= 0 else { return nil }
+        let column = Int(x / slot)
+        guard column >= 0 && column < 9, x.truncatingRemainder(dividingBy: slot) < 38 else { return nil }
+        let mainY = panelY + 48
+        let mainRelativeY = screenMousePosition.y - mainY
+        if mainRelativeY >= 0 {
+            let row = Int(mainRelativeY / slot)
+            if row >= 0 && row < 3 && mainRelativeY.truncatingRemainder(dividingBy: slot) < 38 {
+                return 9 + row * 9 + column
+            }
+        }
+        let hotbarY = panelY + 182
+        if screenMousePosition.y >= hotbarY && screenMousePosition.y < hotbarY + 38 { return column }
+        return nil
     }
 
     private func appendSurvivalHUD(game: GameCore, width: Float, height: Float) {

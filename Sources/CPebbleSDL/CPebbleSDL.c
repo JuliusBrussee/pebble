@@ -48,7 +48,9 @@ int32_t pb_window_poll_event(PBWindow *window, PBWindowEvent *out_event) {
         case SDL_EVENT_KEY_UP:
             out_event->type = PB_WINDOW_EVENT_KEY_UP; out_event->a = (int32_t)event.key.scancode; break;
         case SDL_EVENT_MOUSE_MOTION:
-            out_event->type = PB_WINDOW_EVENT_MOUSE_MOTION; out_event->x = event.motion.xrel; out_event->y = event.motion.yrel; break;
+            out_event->type = PB_WINDOW_EVENT_MOUSE_MOTION;
+            out_event->a = (int32_t)event.motion.x; out_event->b = (int32_t)event.motion.y;
+            out_event->x = event.motion.xrel; out_event->y = event.motion.yrel; break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             out_event->type = PB_WINDOW_EVENT_MOUSE_BUTTON_DOWN; out_event->a = event.button.button; break;
         case SDL_EVENT_MOUSE_BUTTON_UP:

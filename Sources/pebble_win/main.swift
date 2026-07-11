@@ -121,12 +121,14 @@ do {
                 } else if !pressed {
                     game.keyUp(code)
                 }
-            case .mouseMotion(let dx, let dy):
-                if !host.hasScreen() { game.mouseDelta(Double(dx), Double(dy)) }
+            case .mouseMotion(let x, let y, let dx, let dy):
+                if host.hasScreen() { host.screenMouse(x: x, y: y) }
+                else { game.mouseDelta(Double(dx), Double(dy)) }
             case .mouseButton(let button, let pressed):
-                guard !host.hasScreen() else { continue }
                 let mapped = button == 1 ? 0 : button == 3 ? 2 : 1
-                if pressed { game.mouseDown(mapped) } else { game.mouseUp(mapped) }
+                if host.hasScreen() {
+                    if pressed { host.screenMouseButton(mapped, game: game) }
+                } else if pressed { game.mouseDown(mapped) } else { game.mouseUp(mapped) }
             case .mouseWheel(_, let y):
                 if !host.hasScreen(), y != 0 { game.wheelHotbar(y > 0 ? -1 : 1) }
             case .text(let text): host.screenText(text)
