@@ -86,6 +86,9 @@ final class WindowsGameHost: GameHost {
     private weak var tradingMob: Mob?
     private var externalContainerCommit: (() -> Void)?
     private var signLine = 0
+    private var titleWorldSelection = 0
+    private var titleWorldOffset = 0
+    private var pendingWorldDeleteID: String?
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -1005,14 +1008,51 @@ final class WindowsGameHost: GameHost {
                               scale: 8, color: SIMD4<Float>(0.85, 0.94, 1, 1))
         uiCanvas.textCentered("A BLOCK SURVIVAL WORLD", centerX: width / 2, y: height * 0.2 + 70,
                               scale: 1.8, color: SIMD4<Float>(0.68, 0.76, 0.82, 1))
-        let buttonX = width / 2 - 150
-        let buttonY = height * 0.48
         let worlds = game.listWorlds()
-        actionButton(worlds.isEmpty ? "CREATE WORLD" : "PLAY \(worlds[0].name.uppercased())",
-                     x: buttonX, y: buttonY, width: 300)
-        actionButton("NEW WORLD", x: buttonX, y: buttonY + 50, width: 300)
-        actionButton("OPTIONS", x: buttonX, y: buttonY + 100, width: 300)
-        actionButton("QUIT", x: buttonX, y: buttonY + 150, width: 300)
+        let listX = width / 2 - 280, listY = height * 0.39
+        let rowHeight: Float = 42
+        titleWorldSelection = min(max(0, titleWorldSelection), max(0, worlds.count - 1))
+        titleWorldOffset = min(max(0, titleWorldOffset), max(0, worlds.count - 5))
+        if titleWorldSelection < titleWorldOffset { titleWorldOffset = titleWorldSelection }
+        if titleWorldSelection >= titleWorldOffset + 5 { titleWorldOffset = titleWorldSelection - 4 }
+        uiCanvas.fillRect(x: listX, y: listY, width: 560, height: rowHeight * 5,
+                          color: SIMD4<Float>(0.025, 0.035, 0.05, 0.9))
+        if worlds.isEmpty {
+            uiCanvas.textCentered("NO SAVED WORLDS", centerX: width / 2,
+                                  y: listY + rowHeight * 2.2, scale: 1.8,
+                                  color: SIMD4<Float>(0.65, 0.7, 0.76, 1))
+        } else {
+            for (visibleRow, worldIndex) in (titleWorldOffset..<min(worlds.count, titleWorldOffset + 5)).enumerated() {
+                let world = worlds[worldIndex]
+                let y = listY + Float(visibleRow) * rowHeight
+                let hovered = screenMousePosition.x >= listX && screenMousePosition.x < listX + 560 &&
+                              screenMousePosition.y >= y && screenMousePosition.y < y + rowHeight - 2
+                let selected = worldIndex == titleWorldSelection
+                uiCanvas.fillRect(x: listX + 2, y: y + 2, width: 556, height: rowHeight - 4,
+                                  color: selected ? SIMD4<Float>(0.22, 0.35, 0.45, 1)
+                                      : hovered ? SIMD4<Float>(0.16, 0.22, 0.28, 1)
+                                                : SIMD4<Float>(0.08, 0.1, 0.13, 1))
+                _ = uiCanvas.text(world.name, x: listX + 14, y: y + 8, scale: 1.7)
+                let mode = world.gameMode == 1 ? "CREATIVE" : "SURVIVAL"
+                _ = uiCanvas.text("\(mode)  SEED \(world.seed)", x: listX + 320, y: y + 12,
+                                  scale: 1.05, color: SIMD4<Float>(0.7, 0.76, 0.8, 1))
+            }
+        }
+        let buttonY = listY + rowHeight * 5 + 12
+        let selectedID = worlds.isEmpty ? nil : worlds[titleWorldSelection].id
+        actionButton(worlds.isEmpty ? "CREATE WORLD" : "PLAY SELECTED",
+                     x: listX, y: buttonY, width: 274)
+        let deleteTitle = selectedID != nil && pendingWorldDeleteID == selectedID
+            ? "CONFIRM DELETE" : "DELETE WORLD"
+        actionButton(deleteTitle, x: listX + 286, y: buttonY, width: 274)
+        actionButton("NEW WORLD", x: listX, y: buttonY + 46, width: 274)
+        actionButton("OPTIONS", x: listX + 286, y: buttonY + 46, width: 274)
+        actionButton("QUIT", x: width / 2 - 137, y: buttonY + 92, width: 274)
+        if worlds.count > 5 {
+            uiCanvas.textCentered("MOUSE WHEEL OR ARROW KEYS TO BROWSE", centerX: width / 2,
+                                  y: buttonY + 136, scale: 1,
+                                  color: SIMD4<Float>(0.58, 0.65, 0.7, 1))
+        }
         uiCanvas.textCentered("SDL3 + VULKAN", centerX: width / 2, y: height - 34,
                               scale: 1.2, color: SIMD4<Float>(0.55, 0.62, 0.68, 1))
     }
@@ -1262,21 +1302,41 @@ final class WindowsGameHost: GameHost {
     private func handleTitleClick(game: GameCore) {
         let x = screenMousePosition.x
         let y = screenMousePosition.y
-        let buttonX = lastScreenSize.x / 2 - 150
-        let buttonY = lastScreenSize.y * 0.48
-        guard x >= buttonX && x < buttonX + 300 else { return }
-        if y >= buttonY && y < buttonY + 34 {
-            if let first = game.listWorlds().first { game.loadWorld(first.id) }
+        let listX = lastScreenSize.x / 2 - 280, listY = lastScreenSize.y * 0.39
+        let rowHeight: Float = 42
+        let worlds = game.listWorlds()
+        if x >= listX && x < listX + 560 && y >= listY && y < listY + rowHeight * 5 {
+            let index = titleWorldOffset + Int((y - listY) / rowHeight)
+            if index < worlds.count { titleWorldSelection = index; pendingWorldDeleteID = nil }
+            playUI("ui.button.click")
+            return
+        }
+        let buttonY = listY + rowHeight * 5 + 12
+        if x >= listX && x < listX + 274 && y >= buttonY && y < buttonY + 34 {
+            if !worlds.isEmpty { game.loadWorld(worlds[titleWorldSelection].id) }
             else { game.createWorld(name: "World", seedText: "", mode: 0, difficulty: 2) }
             closeAllScreens()
-        } else if y >= buttonY + 50 && y < buttonY + 84 {
+        } else if x >= listX + 286 && x < listX + 560 && y >= buttonY && y < buttonY + 34,
+                  !worlds.isEmpty {
+            let selected = worlds[titleWorldSelection]
+            if pendingWorldDeleteID == selected.id {
+                game.deleteWorld(selected.id)
+                titleWorldSelection = min(titleWorldSelection, max(0, worlds.count - 2))
+                pendingWorldDeleteID = nil
+            } else {
+                pendingWorldDeleteID = selected.id
+            }
+        } else if x >= listX && x < listX + 274 && y >= buttonY + 46 && y < buttonY + 80 {
             let number = game.listWorlds().count + 1
             game.createWorld(name: "World \(number)", seedText: "", mode: 0, difficulty: 2)
             closeAllScreens()
-        } else if y >= buttonY + 100 && y < buttonY + 134 {
+        } else if x >= listX + 286 && x < listX + 560 && y >= buttonY + 46 && y < buttonY + 80 {
             screenReturnKind = "title"; screenKind = "options"
-        } else if y >= buttonY + 150 && y < buttonY + 184 {
+        } else if x >= lastScreenSize.x / 2 - 137 && x < lastScreenSize.x / 2 + 137 &&
+                  y >= buttonY + 92 && y < buttonY + 126 {
             exitRequested = true
+        } else {
+            return
         }
         playUI("ui.button.click")
     }
@@ -1545,7 +1605,10 @@ final class WindowsGameHost: GameHost {
     func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
     func openDeathScreen(_ message: String) { screenKind = "death"; screenMessage = message; screenOpen = true }
     func openPauseScreen() { screenKind = "pause"; screenOpen = true }
-    func openTitleScreen() { screenKind = "title"; screenOpen = true }
+    func openTitleScreen() {
+        screenKind = "title"; screenOpen = true
+        titleWorldSelection = 0; titleWorldOffset = 0; pendingWorldDeleteID = nil
+    }
     func closeAllScreens() {
         externalContainerCommit?()
         externalContainerCommit = nil
@@ -1563,7 +1626,20 @@ final class WindowsGameHost: GameHost {
     }
     func screenKey(_ code: String, game: GameCore) -> Bool {
         guard screenOpen else { return false }
-        if code == "Backspace", screenKind == "chat", !textBuffer.isEmpty {
+        if screenKind == "title", (code == "ArrowUp" || code == "ArrowDown") {
+            let count = game.listWorlds().count
+            if count > 0 {
+                titleWorldSelection = min(count - 1, max(0, titleWorldSelection + (code == "ArrowUp" ? -1 : 1)))
+                pendingWorldDeleteID = nil
+            }
+            return false
+        } else if screenKind == "title", code == "Enter" {
+            let worlds = game.listWorlds()
+            if worlds.isEmpty { game.createWorld(name: "World", seedText: "", mode: 0, difficulty: 2) }
+            else { game.loadWorld(worlds[titleWorldSelection].id) }
+            closeAllScreens()
+            return true
+        } else if code == "Backspace", screenKind == "chat", !textBuffer.isEmpty {
             textBuffer.removeLast()
         } else if code == "Backspace", screenKind == "sign", var lines = screenData?.be?.lines,
                   signLine < lines.count, !lines[signLine].isEmpty {
@@ -1580,8 +1656,14 @@ final class WindowsGameHost: GameHost {
         }
         return false
     }
+    func screenScroll(_ delta: Int) {
+        guard screenOpen, screenKind == "title", delta != 0 else { return }
+        titleWorldSelection = max(0, titleWorldSelection + delta)
+        pendingWorldDeleteID = nil
+    }
     func escapeScreen() -> Bool {
         guard screenOpen, screenKind != "death" else { return false }
+        if screenKind == "title" { return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true

@@ -173,7 +173,8 @@ do {
                     if pressed { host.screenMouseButton(mapped, game: game) }
                 } else if pressed { game.mouseDown(mapped) } else { game.mouseUp(mapped) }
             case .mouseWheel(_, let y):
-                if !host.hasScreen(), y != 0 { game.wheelHotbar(y > 0 ? -1 : 1) }
+                if host.hasScreen(), y != 0 { host.screenScroll(y > 0 ? -1 : 1) }
+                else if y != 0 { game.wheelHotbar(y > 0 ? -1 : 1) }
             case .text(let text): host.screenText(text)
             case .focusChanged(let focused):
                 if !focused {
