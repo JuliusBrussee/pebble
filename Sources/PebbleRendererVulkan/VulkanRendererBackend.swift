@@ -246,6 +246,11 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
         atlasHandle = handle
     }
 
+    public func installUITexture(_ handle: TextureHandle) throws {
+        guard let texture = resources.texture(handle) else { throw RendererBackendError.invalidHandle(handle.raw) }
+        try chunkRenderer.setUITexture(texture)
+    }
+
     public func render(_ frame: FramePacket, target: RenderTarget) throws {
         if target.width != targetSize.width || target.height != targetSize.height {
             try swapchain.resize(width: target.width, height: target.height)

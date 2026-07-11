@@ -14,6 +14,7 @@ public final class UICanvasCPU {
     public var width: Float
     public var height: Float
     public var color = SIMD4<Float>(1, 1, 1, 1)
+    public var solidUV = SIMD2<Float>(0.5, 0.5)
     private var vertices: [UIVertex] = []
 
     public init(width: Float, height: Float) {
@@ -35,11 +36,21 @@ public final class UICanvasCPU {
 
     public func gradientRect(x: Float, y: Float, width: Float, height: Float,
                              top: SIMD4<Float>, bottom: SIMD4<Float>) {
-        let p0 = UIVertex(x: x, y: y, u: 0.5, v: 0.5, r: top.x, g: top.y, b: top.z, a: top.w)
-        let p1 = UIVertex(x: x + width, y: y, u: 0.5, v: 0.5, r: top.x, g: top.y, b: top.z, a: top.w)
-        let p2 = UIVertex(x: x + width, y: y + height, u: 0.5, v: 0.5, r: bottom.x, g: bottom.y, b: bottom.z, a: bottom.w)
-        let p3 = UIVertex(x: x, y: y + height, u: 0.5, v: 0.5, r: bottom.x, g: bottom.y, b: bottom.z, a: bottom.w)
+        let p0 = UIVertex(x: x, y: y, u: solidUV.x, v: solidUV.y, r: top.x, g: top.y, b: top.z, a: top.w)
+        let p1 = UIVertex(x: x + width, y: y, u: solidUV.x, v: solidUV.y, r: top.x, g: top.y, b: top.z, a: top.w)
+        let p2 = UIVertex(x: x + width, y: y + height, u: solidUV.x, v: solidUV.y, r: bottom.x, g: bottom.y, b: bottom.z, a: bottom.w)
+        let p3 = UIVertex(x: x, y: y + height, u: solidUV.x, v: solidUV.y, r: bottom.x, g: bottom.y, b: bottom.z, a: bottom.w)
         vertices.append(contentsOf: [p0, p1, p2, p0, p2, p3])
+    }
+
+    public func texturedRect(x: Float, y: Float, width: Float, height: Float,
+                             u0: Float, v0: Float, u1: Float, v1: Float,
+                             color: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 1)) {
+        let a = UIVertex(x: x, y: y, u: u0, v: v0, r: color.x, g: color.y, b: color.z, a: color.w)
+        let b = UIVertex(x: x + width, y: y, u: u1, v: v0, r: color.x, g: color.y, b: color.z, a: color.w)
+        let c = UIVertex(x: x + width, y: y + height, u: u1, v: v1, r: color.x, g: color.y, b: color.z, a: color.w)
+        let d = UIVertex(x: x, y: y + height, u: u0, v: v1, r: color.x, g: color.y, b: color.z, a: color.w)
+        vertices.append(contentsOf: [a, b, c, a, c, d])
     }
 
     @discardableResult
@@ -81,10 +92,10 @@ public final class UICanvasCPU {
 
     private func quad(x: Float, y: Float, width: Float, height: Float,
                       color: SIMD4<Float>) {
-        let a = UIVertex(x: x, y: y, u: 0.5, v: 0.5, r: color.x, g: color.y, b: color.z, a: color.w)
-        let b = UIVertex(x: x + width, y: y, u: 0.5, v: 0.5, r: color.x, g: color.y, b: color.z, a: color.w)
-        let c = UIVertex(x: x + width, y: y + height, u: 0.5, v: 0.5, r: color.x, g: color.y, b: color.z, a: color.w)
-        let d = UIVertex(x: x, y: y + height, u: 0.5, v: 0.5, r: color.x, g: color.y, b: color.z, a: color.w)
+        let a = UIVertex(x: x, y: y, u: solidUV.x, v: solidUV.y, r: color.x, g: color.y, b: color.z, a: color.w)
+        let b = UIVertex(x: x + width, y: y, u: solidUV.x, v: solidUV.y, r: color.x, g: color.y, b: color.z, a: color.w)
+        let c = UIVertex(x: x + width, y: y + height, u: solidUV.x, v: solidUV.y, r: color.x, g: color.y, b: color.z, a: color.w)
+        let d = UIVertex(x: x, y: y + height, u: solidUV.x, v: solidUV.y, r: color.x, g: color.y, b: color.z, a: color.w)
         vertices.append(contentsOf: [a, b, c, a, c, d])
     }
 }

@@ -87,6 +87,18 @@ public final class ResourcePackStack: @unchecked Sendable {
             ?? entityImage(["entity/steve.png"])
     }
 
+    public func itemIcon(_ name: String) -> [UInt8]? {
+        guard var image = packs.lazy.compactMap({ $0.texture("item/\(name).png") }).first else {
+            return nil
+        }
+        if image.height > image.width, image.height % image.width == 0 {
+            image.pixels = Array(image.pixels.prefix(image.width * image.width * 4))
+            image.height = image.width
+        }
+        guard image.width == image.height else { return nil }
+        return resizeSquare(image, size: 16)
+    }
+
     public func blockAtlas(fallback: BuiltAtlas) -> BuiltAtlas {
         blockAtlasResult(fallback: fallback).atlas
     }

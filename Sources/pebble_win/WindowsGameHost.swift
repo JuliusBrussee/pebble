@@ -43,6 +43,7 @@ private struct WinParticle {
 final class WindowsGameHost: GameHost {
     let renderer: VulkanRendererBackend
     let atlas: TextureHandle
+    let uiAtlas: TextureHandle
     private let mixer = AudioMixer()
     private var audioOutput: NativeMixerOutput?
     private var sections: [WinSectionKey: WinSectionMeshes] = [:]
@@ -70,6 +71,8 @@ final class WindowsGameHost: GameHost {
     private var atlasAnimations: [PortableTileAnimation] = []
     private var atlasAnimationFrames: [Int] = []
     private var lastAtlasTick = -1
+    private let uiAtlasWidth: Int
+    private let uiAtlasHeight: Int
     private var musicMood = ""
     private var musicCooldown = 0
     private var discPlaying = false
@@ -98,6 +101,38 @@ final class WindowsGameHost: GameHost {
             width: TILE, height: TILE, layers: built.count,
             format: .rgba8Unorm, bytes: built.pixels.flatMap { $0 }))
         try renderer.installAtlas(atlas)
+        initIcons(built)
+        itemIconOverride = { resourcePacks.itemIcon($0) }
+        resetIconCache()
+        let columns = 32
+        let rows = max(1, (itemDefs.count + 1 + columns - 1) / columns)
+        uiAtlasWidth = columns * 16
+        uiAtlasHeight = rows * 16
+        var uiPixels = [UInt8](repeating: 0, count: uiAtlasWidth * uiAtlasHeight * 4)
+        for y in 0..<16 {
+            for x in 0..<16 {
+                let offset = (y * uiAtlasWidth + x) * 4
+                uiPixels[offset] = 255; uiPixels[offset + 1] = 255
+                uiPixels[offset + 2] = 255; uiPixels[offset + 3] = 255
+            }
+        }
+        for itemID in itemDefs.indices {
+            let cell = itemID + 1
+            let originX = (cell % columns) * 16
+            let originY = (cell / columns) * 16
+            let icon = itemIconPixels(itemID)
+            for y in 0..<16 {
+                let source = y * 16 * 4
+                let destination = ((originY + y) * uiAtlasWidth + originX) * 4
+                uiPixels.replaceSubrange(destination..<(destination + 16 * 4),
+                                         with: icon[source..<(source + 16 * 4)])
+            }
+        }
+        uiAtlas = try renderer.createTexture(RenderTextureData(
+            width: uiAtlasWidth, height: uiAtlasHeight,
+            format: .rgba8Unorm, bytes: uiPixels))
+        try renderer.installUITexture(uiAtlas)
+        uiCanvas.solidUV = SIMD2<Float>(8 / Float(uiAtlasWidth), 8 / Float(uiAtlasHeight))
         audioOutput = try? NativeMixerOutput(mixer: mixer)
         try? audioOutput?.start()
     }
@@ -113,6 +148,7 @@ final class WindowsGameHost: GameHost {
             renderer.destroyTexture(resources.texture)
         }
         renderer.destroyTexture(atlas)
+        renderer.destroyTexture(uiAtlas)
     }
 
     func buildFrame(game: GameCore, target: RenderTarget,
@@ -1097,10 +1133,16 @@ final class WindowsGameHost: GameHost {
     }
 
     private func inventoryItem(_ stack: ItemStack, x: Float, y: Float) {
-        let name = itemName(stack.id).split(separator: "_").map { String($0.prefix(1)) }.joined()
-        _ = uiCanvas.text(String(name.prefix(4)), x: x, y: y, scale: 1.3,
-                          color: stack.ench.isEmpty ? SIMD4<Float>(0.92, 0.93, 0.96, 1)
-                                                   : SIMD4<Float>(0.72, 0.5, 1, 1))
+        let cell = stack.id + 1
+        let column = cell % 32, row = cell / 32
+        let tint = stack.ench.isEmpty ? SIMD4<Float>(1, 1, 1, 1)
+                                      : SIMD4<Float>(0.82, 0.68, 1, 1)
+        uiCanvas.texturedRect(
+            x: x, y: y - 3, width: 28, height: 28,
+            u0: Float(column * 16) / Float(uiAtlasWidth) + 0.5 / Float(uiAtlasWidth),
+            v0: Float(row * 16) / Float(uiAtlasHeight) + 0.5 / Float(uiAtlasHeight),
+            u1: Float(column * 16 + 16) / Float(uiAtlasWidth) - 0.5 / Float(uiAtlasWidth),
+            v1: Float(row * 16 + 16) / Float(uiAtlasHeight) - 0.5 / Float(uiAtlasHeight), color: tint)
         if stack.count > 1 {
             _ = uiCanvas.text("\(stack.count)", x: x + 18, y: y + 17, scale: 1,
                               color: SIMD4<Float>(1, 1, 1, 1))
@@ -1395,14 +1437,7 @@ final class WindowsGameHost: GameHost {
             uiCanvas.fillRect(x: x + 2, y: top + 2, width: slot - 6, height: 34,
                               color: SIMD4<Float>(0.13, 0.14, 0.17, 0.92))
             if let stack = player.inventory[index] {
-                let name = itemName(stack.id).split(separator: "_").first.map(String.init) ?? "?"
-                _ = uiCanvas.text(String(name.prefix(3)), x: x + 5, y: top + 8, scale: 1.25,
-                                  color: stack.ench.isEmpty ? SIMD4<Float>(0.88, 0.9, 0.94, 1)
-                                                           : SIMD4<Float>(0.72, 0.5, 1, 1))
-                if stack.count > 1 {
-                    _ = uiCanvas.text("\(stack.count)", x: x + 21, y: top + 24, scale: 1,
-                                      color: SIMD4<Float>(1, 1, 1, 1))
-                }
+                inventoryItem(stack, x: x + 5, y: top + 8)
             }
         }
         let healthWidth: Float = 160
