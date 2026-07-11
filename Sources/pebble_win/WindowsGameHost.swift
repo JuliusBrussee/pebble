@@ -66,6 +66,10 @@ final class WindowsGameHost: GameHost {
     private var toasts: [(definition: AdvancementDef, frames: Int)] = []
     private let resourcePacks: ResourcePackStack
     private let customSkinURL: URL
+    private var atlasSlices: [[UInt8]] = []
+    private var atlasAnimations: [PortableTileAnimation] = []
+    private var atlasAnimationFrames: [Int] = []
+    private var lastAtlasTick = -1
     private var musicMood = ""
     private var musicCooldown = 0
     private var discPlaying = false
@@ -85,7 +89,11 @@ final class WindowsGameHost: GameHost {
         self.renderer = renderer
         self.resourcePacks = resourcePacks
         self.customSkinURL = customSkinURL
-        let built = resourcePacks.blockAtlas(fallback: PebbleCore.buildAtlas())
+        let packed = resourcePacks.blockAtlasResult(fallback: PebbleCore.buildAtlas())
+        let built = packed.atlas
+        atlasSlices = built.pixels
+        atlasAnimations = packed.animations
+        atlasAnimationFrames = [Int](repeating: -1, count: packed.animations.count)
         atlas = try renderer.createTexture(RenderTextureData(
             width: TILE, height: TILE, layers: built.count,
             format: .rgba8Unorm, bytes: built.pixels.flatMap { $0 }))
@@ -111,6 +119,7 @@ final class WindowsGameHost: GameHost {
                     partial: Double, timeSec: Double) -> FramePacket {
         mixer.setVolumes(master: game.settings.volumes["master"] ?? 0.8,
                          categories: game.settings.volumes.filter { $0.key != "master" })
+        tickAtlasAnimations(timeSec: timeSec)
         guard game.hasWorld() else {
             return emptyFrame(game: game, target: target, timeSec: timeSec)
         }
@@ -218,6 +227,40 @@ final class WindowsGameHost: GameHost {
                         uniforms: uniforms, partial: partial, builder: &builder)
         appendUI(game: game, target: target, builder: &builder)
         return builder.finish(includeEmptyPasses: false)
+    }
+
+    private func tickAtlasAnimations(timeSec: Double) {
+        guard !atlasAnimations.isEmpty else { return }
+        let tick = Int(timeSec * 20)
+        guard tick != lastAtlasTick else { return }
+        lastAtlasTick = tick
+        var changed = false
+        for index in atlasAnimations.indices {
+            let animation = atlasAnimations[index]
+            let cycleTicks = max(1, animation.ticks.reduce(0, +))
+            var phase = ((tick % cycleTicks) + cycleTicks) % cycleTicks
+            var orderIndex = 0
+            for candidate in animation.ticks.indices {
+                let duration = max(1, animation.ticks[candidate])
+                if phase < duration {
+                    orderIndex = candidate
+                    break
+                }
+                phase -= duration
+            }
+            guard orderIndex < animation.order.count else { continue }
+            let frame = animation.order[orderIndex]
+            guard frame != atlasAnimationFrames[index],
+                  animation.frames.indices.contains(frame),
+                  atlasSlices.indices.contains(animation.slice) else { continue }
+            atlasAnimationFrames[index] = frame
+            atlasSlices[animation.slice] = animation.frames[frame]
+            changed = true
+        }
+        guard changed else { return }
+        try? renderer.updateTexture(atlas, data: RenderTextureData(
+            width: TILE, height: TILE, layers: atlasSlices.count,
+            format: .rgba8Unorm, bytes: atlasSlices.flatMap { $0 }))
     }
 
     private var meshIndexCounts: [MeshHandle: UInt32] = [:]

@@ -269,7 +269,7 @@ public func paintTile(_ name: String) -> T {
     return t
 }
 
-public struct BuiltAtlas {
+public struct BuiltAtlas: Sendable {
     public let count: Int
     /// tiles as raw RGBA (TILE*TILE*4 bytes each) for Metal upload
     public let pixels: [[UInt8]]

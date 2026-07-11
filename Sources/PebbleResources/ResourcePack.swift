@@ -88,13 +88,36 @@ public final class ResourcePackStack: @unchecked Sendable {
     }
 
     public func blockAtlas(fallback: BuiltAtlas) -> BuiltAtlas {
+        blockAtlasResult(fallback: fallback).atlas
+    }
+
+    public func blockAtlasResult(fallback: BuiltAtlas) -> PortableAtlasResult {
         let names = allTileNames()
-        guard !packs.isEmpty, fallback.pixels.count == names.count else { return fallback }
+        guard !packs.isEmpty, fallback.pixels.count == names.count else {
+            return PortableAtlasResult(atlas: fallback, animations: [])
+        }
         var slices = fallback.pixels
+        var animations: [PortableTileAnimation] = []
         for (index, name) in names.enumerated() {
             for candidate in blockTextureCandidates(name) {
-                guard var image = packs.lazy.compactMap({ $0.texture(candidate + ".png") }).first else { continue }
+                guard let pack = packs.first(where: { $0.file($0.textureRoot + candidate + ".png") != nil }),
+                      var image = pack.texture(candidate + ".png") else { continue }
                 if image.height > image.width, image.height % image.width == 0 {
+                    let frameCount = image.height / image.width
+                    var frames: [[UInt8]] = []
+                    for frame in 0..<frameCount {
+                        let start = frame * image.width * image.width * 4
+                        let pixels = Array(image.pixels[start..<(start + image.width * image.width * 4)])
+                        var resized = resizeSquare(PNGImage(width: image.width, height: image.width,
+                                                            pixels: pixels), size: TILE)
+                        if let color = bakedBlockTint[name] { tint(&resized, color: color) }
+                        frames.append(resized)
+                    }
+                    if frames.count > 1 {
+                        let timing = animationTiming(pack: pack, path: candidate, frameCount: frames.count)
+                        animations.append(PortableTileAnimation(slice: index, frames: frames,
+                                                                 order: timing.order, ticks: timing.ticks))
+                    }
                     image.pixels = Array(image.pixels.prefix(image.width * image.width * 4))
                     image.height = image.width
                 }
@@ -105,8 +128,48 @@ public final class ResourcePackStack: @unchecked Sendable {
                 break
             }
         }
-        return BuiltAtlas(count: slices.count, pixels: slices, missing: fallback.missing)
+        return PortableAtlasResult(
+            atlas: BuiltAtlas(count: slices.count, pixels: slices, missing: fallback.missing),
+            animations: animations)
     }
+}
+
+public struct PortableTileAnimation: Sendable {
+    public let slice: Int
+    public let frames: [[UInt8]]
+    public let order: [Int]
+    public let ticks: [Int]
+}
+
+public struct PortableAtlasResult: Sendable {
+    public let atlas: BuiltAtlas
+    public let animations: [PortableTileAnimation]
+}
+
+private func animationTiming(pack: PortableResourcePack, path: String,
+                             frameCount: Int) -> (order: [Int], ticks: [Int]) {
+    var frameTime = 1
+    var order = Array(0..<frameCount)
+    var ticks = [Int](repeating: 1, count: frameCount)
+    guard let data = pack.file(pack.textureRoot + path + ".png.mcmeta"),
+          let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let animation = root["animation"] as? [String: Any] else { return (order, ticks) }
+    frameTime = max(1, animation["frametime"] as? Int ?? 1)
+    if let values = animation["frames"] as? [Any] {
+        var parsedOrder: [Int] = [], parsedTicks: [Int] = []
+        for value in values {
+            if let index = value as? Int, index >= 0 && index < frameCount {
+                parsedOrder.append(index); parsedTicks.append(frameTime)
+            } else if let object = value as? [String: Any], let index = object["index"] as? Int,
+                      index >= 0 && index < frameCount {
+                parsedOrder.append(index); parsedTicks.append(max(1, object["time"] as? Int ?? frameTime))
+            }
+        }
+        if !parsedOrder.isEmpty { order = parsedOrder; ticks = parsedTicks }
+    } else {
+        ticks = [Int](repeating: frameTime, count: frameCount)
+    }
+    return (order, ticks)
 }
 
 private let blockNameMap: [String: [String]] = [
