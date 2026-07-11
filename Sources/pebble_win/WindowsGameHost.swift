@@ -207,7 +207,7 @@ final class WindowsGameHost: GameHost {
                               shared: shared, builder: &builder)
         appendEntities(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
                        partial: partial, uniforms: uniforms, builder: &builder)
-        appendParticles(cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
+        appendParticles(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
                         viewProjection: camera.viewProj, right: right, up: cameraUp,
                         dayLight: dayLight, timeSec: timeSec, builder: &builder)
         appendViewmodel(game: game, direction: direction, right: right, up: cameraUp,
@@ -532,7 +532,7 @@ final class WindowsGameHost: GameHost {
         return value
     }
 
-    private func appendParticles(cameraPosition: SIMD3<Double>, viewProjection: ABIMat4,
+    private func appendParticles(game: GameCore, cameraPosition: SIMD3<Double>, viewProjection: ABIMat4,
                                  right: SIMD3<Float>, up: SIMD3<Float>, dayLight: Float,
                                  timeSec: Double, builder: inout FrameBuilder) {
         let elapsed = min(0.1, max(0, timeSec - (particleClock ?? timeSec)))
@@ -547,10 +547,9 @@ final class WindowsGameHost: GameHost {
             }
             particles.removeAll { $0.age >= $0.lifetime }
         }
-        guard !particles.isEmpty else { return }
         let corners: [Float] = [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]
         var instances: [ParticleInstance] = []
-        instances.reserveCapacity(particles.count)
+        instances.reserveCapacity(particles.count + 128)
         for particle in particles {
             let lifeScale = particle.shrink ? max(0.2, 1 - particle.age / particle.lifetime) : 1
             let encoded = Double(particle.tile * 256) + min(255, particle.size * lifeScale * 100)
@@ -561,6 +560,8 @@ final class WindowsGameHost: GameHost {
                 u0: 0, v0: 0, u1: 1, v1: 1, layerSize: Float(encoded),
                 r: particle.color.x, g: particle.color.y, b: particle.color.z, light: particle.light))
         }
+        appendEntitySprites(game: game, cameraPosition: cameraPosition, instances: &instances)
+        guard !instances.isEmpty else { return }
         var bytes = corners.withUnsafeBytes { Array($0) }
         bytes.append(contentsOf: RenderBytes.copy(instances))
         let data = RenderMeshData(vertexLayout: .particle, vertexBytes: bytes)
@@ -578,6 +579,48 @@ final class WindowsGameHost: GameHost {
                         vertexRange: 0..<6, instanceRange: 0..<UInt32(instances.count),
                         textures: [TextureBinding(index: 3, texture: atlas, sampler: nil)],
                         pushConstants: RenderBytes.copy(constants))
+    }
+
+    private func appendEntitySprites(game: GameCore, cameraPosition: SIMD3<Double>,
+                                     instances: inout [ParticleInstance]) {
+        let spriteTypes: Set<String> = ["snowball", "egg", "ender_pearl", "xp_bottle",
+            "thrown_potion", "firework", "eye_of_ender", "fishing_bobber", "wither_skull",
+            "dragon_fireball", "fireball", "shulker_bullet", "llama_spit"]
+        for reference in game.world.entities {
+            guard let entity = reference as? Entity, !entity.dead,
+                  entity.type == "item" || entity.type == "xp_orb" || spriteTypes.contains(entity.type) else { continue }
+            let dx = entity.x - cameraPosition.x, dz = entity.z - cameraPosition.z
+            if dx * dx + dz * dz > 64 * 64 { continue }
+            var tile = tileId("crit_particle")
+            var color = SIMD3<Float>(1, 1, 1)
+            var size = 0.22
+            var light: Float = 0.85
+            if let item = entity as? ItemEntity {
+                let definition = itemDef(item.stack.id)
+                if let block = definition.block {
+                    let blockDefinition = blockDefs[Int(block)]
+                    if !blockDefinition.tex.isEmpty { tile = Int(blockDefinition.tex[min(2, blockDefinition.tex.count - 1)]) }
+                } else {
+                    let hash = hashString(definition.name)
+                    color = SIMD3<Float>(0.45 + Float(hash & 255) / 510,
+                                         0.45 + Float((hash >> 8) & 255) / 510,
+                                         0.45 + Float((hash >> 16) & 255) / 510)
+                }
+                size = 0.24
+            } else if entity.type == "xp_orb" {
+                color = SIMD3<Float>(0.45, 1, 0.15); size = 0.18; light = 1
+            } else if entity.type == "fireball" || entity.type == "dragon_fireball" || entity.type == "wither_skull" {
+                tile = tileId("flame_particle"); size = 0.25; light = 1
+            }
+            let bob = entity.type == "item" ? detSin(Double(entity.age) * 0.08) * 0.08 + 0.18 : 0.12
+            instances.append(ParticleInstance(
+                x: Float(entity.x - cameraPosition.x),
+                y: Float(entity.y + bob - cameraPosition.y),
+                z: Float(entity.z - cameraPosition.z),
+                u0: 0, v0: 0, u1: 1, v1: 1,
+                layerSize: Float(tile * 256) + Float(size * 100),
+                r: color.x, g: color.y, b: color.z, light: light))
+        }
     }
 
     private func spawnParticles(_ type: String, x: Double, y: Double, z: Double,
