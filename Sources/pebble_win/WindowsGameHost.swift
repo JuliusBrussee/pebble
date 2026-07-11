@@ -200,6 +200,8 @@ final class WindowsGameHost: GameHost {
         appendParticles(cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
                         viewProjection: camera.viewProj, right: right, up: cameraUp,
                         dayLight: dayLight, timeSec: timeSec, builder: &builder)
+        appendViewmodel(game: game, direction: direction, right: right, up: cameraUp,
+                        uniforms: uniforms, partial: partial, builder: &builder)
         appendUI(game: game, target: target, builder: &builder)
         return builder.finish(includeEmptyPasses: false)
     }
@@ -385,6 +387,68 @@ final class WindowsGameHost: GameHost {
             matrices[index] = abi(matrix)
         }
         return matrices
+    }
+
+    private func appendViewmodel(game: GameCore, direction: SIMD3<Float>, right: SIMD3<Float>,
+                                 up: SIMD3<Float>, uniforms: FrameUniforms, partial: Double,
+                                 builder: inout FrameBuilder) {
+        guard game.perspective == 0, !screenOpen, let player = game.player,
+              player.deathTime == 0, !player.dead,
+              let resources = viewmodelResources() else { return }
+        let swing = Float(detSin((player.attackAnim + partial * 0.05) * .pi))
+        let position = direction * (0.62 - swing * 0.08) + right * (0.43 - swing * 0.12) -
+                       up * (0.45 + swing * 0.08)
+        var model = mat4Identity()
+        model = mat4Translate(model, position.x, position.y, position.z)
+        model = mat4RotateY(model, Float(.pi - player.yaw))
+        model = mat4RotateX(model, Float(-player.pitch * 0.2 - Double(swing) * 0.7))
+        model = mat4Scale(model, 0.82, 0.82, 0.82)
+        let constants = EntityDrawPacketConstants(
+            model: abi(model),
+            light: SIMD4<Float>(15, 15, uniforms.dayLight, uniforms.gamma),
+            misc: SIMD4<Float>(1, 1, 1_000_000, 1_000_001),
+            overlay: SIMD4<Float>(1, 0.2, 0.2, player.invulnTicks > 0 ? 0.25 : 0),
+            fogColor: uniforms.fogColor)
+        var parts = [ABIMat4](repeating: .identity, count: 24)
+        if let arm = resources.model.parts.first {
+            var part = mat4Identity()
+            part = mat4Translate(part, Float(arm.pivot.0 / 16), Float(arm.pivot.1 / 16), Float(arm.pivot.2 / 16))
+            part = mat4RotateX(part, Float(-0.35 - Double(swing) * 0.8))
+            parts[0] = abi(part)
+        }
+        var packet = RenderBytes.copy(constants)
+        packet.append(contentsOf: RenderBytes.copy(parts))
+        builder.addDraw(pass: .entities, pipeline: .entityHDR, mesh: resources.mesh,
+                        depthBucket: UInt32.max, vertexRange: 0..<resources.vertexCount,
+                        textures: [TextureBinding(index: 0, texture: resources.texture, sampler: nil)],
+                        pushConstants: packet)
+    }
+
+    private func viewmodelResources() -> WinEntityResources? {
+        let key = "__viewmodel_arm"
+        if let cached = entityResources[key] { return cached }
+        let base = getModel("player")
+        guard let arm = base.parts.first(where: { $0.name == "armR" }) else { return nil }
+        let model = MobModel(texW: base.texW, texH: base.texH, parts: [arm], anim: "viewmodel",
+                             scale: base.scale, paint: base.paint, packTex: base.packTex,
+                             packTexStack: base.packTexStack, packTexTints: base.packTexTints)
+        let geometry = buildEntityGeometry(from: model, skinName: "player")
+        guard let mesh = try? renderer.createMesh(RenderMeshData(
+            vertexLayout: .entity, vertexBytes: geometry.verts.withUnsafeBytes { Array($0) })) else { return nil }
+        let packed = resourcePacks.playerSkin(customURL: customSkinURL)
+        let width = packed?.width ?? geometry.skin.w
+        let height = packed?.height ?? geometry.skin.h
+        let pixels = packed?.pixels ?? geometry.skin.data
+        guard let texture = try? renderer.createTexture(RenderTextureData(
+            width: width, height: height, format: .rgba8Unorm, bytes: pixels)) else {
+            renderer.destroyMesh(mesh)
+            return nil
+        }
+        let resources = WinEntityResources(mesh: mesh, texture: texture,
+                                           vertexCount: UInt32(geometry.vertexCount),
+                                           scale: Float(model.scale), model: model)
+        entityResources[key] = resources
+        return resources
     }
 
     private func entityModelName(_ entity: Entity) -> String? {

@@ -249,12 +249,15 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
             $0.pipeline == .opaque || $0.pipeline == .cutout || $0.pipeline == .translucent
         }
         let uiDraws = frame.passes.flatMap(\.draws).filter { $0.pipeline == .ui }
-        let entityDraws = frame.passes.flatMap(\.draws).filter { $0.pipeline == .entity }
+        let entityDraws = frame.passes.flatMap(\.draws).filter {
+            $0.pipeline == .entity || $0.pipeline == .entityHDR
+        }
         let particleDraws = frame.passes.flatMap(\.draws).filter { $0.pipeline == .particle }
         let unsupported = frame.passes.flatMap(\.draws).first {
             $0.pipeline != .opaque && $0.pipeline != .cutout &&
             $0.pipeline != .translucent && $0.pipeline != .shadow &&
-            $0.pipeline != .entity && $0.pipeline != .particle && $0.pipeline != .ui
+            $0.pipeline != .entity && $0.pipeline != .entityHDR &&
+            $0.pipeline != .particle && $0.pipeline != .ui
         }
         if let unsupported { throw RendererBackendError.unsupportedPipeline(unsupported.pipeline.raw) }
 
@@ -294,6 +297,7 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
             raw.screen.2 = 0; raw.screen.3 = 0
             raw.vertex_count = UInt32(draw.vertexRange.count)
             raw.first_vertex = draw.vertexRange.lowerBound
+            raw.depth_mode = draw.pipeline == .entityHDR ? 1 : 0
             rawUI.append(raw)
         }
         var rawEntities: [PBVulkanEntityDraw] = []

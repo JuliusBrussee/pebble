@@ -108,7 +108,7 @@ struct PBVulkanChunkRenderer {
     size_t shadow_vertex_spirv_size;
     VkDescriptorSetLayout entity_descriptor_layout;
     VkPipelineLayout entity_pipeline_layout;
-    VkPipeline entity_pipeline;
+    VkPipeline entity_pipelines[2];
     VkDescriptorPool entity_descriptor_pool;
     VkBuffer entity_frame_buffer;
     VkDeviceMemory entity_frame_memory;
@@ -826,9 +826,11 @@ static PBVulkanStatus pbvk_ui_pipeline_build(PBVulkanChunkRenderer *renderer) {
 }
 
 static void pbvk_entity_pipeline_release(PBVulkanChunkRenderer *renderer) {
-    if (renderer->entity_pipeline != VK_NULL_HANDLE) {
-        vkDestroyPipeline(renderer->swapchain->context->device, renderer->entity_pipeline, NULL);
-        renderer->entity_pipeline = VK_NULL_HANDLE;
+    for (uint32_t index = 0; index < 2; index++) {
+        if (renderer->entity_pipelines[index] != VK_NULL_HANDLE) {
+            vkDestroyPipeline(renderer->swapchain->context->device, renderer->entity_pipelines[index], NULL);
+            renderer->entity_pipelines[index] = VK_NULL_HANDLE;
+        }
     }
 }
 
@@ -894,8 +896,13 @@ static PBVulkanStatus pbvk_entity_pipeline_build(PBVulkanChunkRenderer *renderer
     pipeline.pColorBlendState = &blend; pipeline.pDynamicState = &dynamic;
     pipeline.layout = renderer->entity_pipeline_layout;
     pipeline.renderPass = renderer->swapchain->render_pass;
-    VkResult result = vkCreateGraphicsPipelines(context->device, VK_NULL_HANDLE, 1, &pipeline, NULL,
-                                                 &renderer->entity_pipeline);
+    VkResult result = VK_SUCCESS;
+    for (uint32_t index = 0; index < 2 && result == VK_SUCCESS; index++) {
+        depth.depthTestEnable = index == 0 ? VK_TRUE : VK_FALSE;
+        depth.depthWriteEnable = index == 0 ? VK_TRUE : VK_FALSE;
+        result = vkCreateGraphicsPipelines(context->device, VK_NULL_HANDLE, 1, &pipeline, NULL,
+                                           &renderer->entity_pipelines[index]);
+    }
     vkDestroyShaderModule(context->device, vertex, NULL);
     vkDestroyShaderModule(context->device, fragment, NULL);
     return result == VK_SUCCESS ? PB_VULKAN_OK
@@ -1678,7 +1685,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
         (draw_count > 0 && draws == NULL) || (ui_draw_count > 0 && ui_draws == NULL) ||
         (entity_draw_count > 0 && (entity_draws == NULL || entity_view_projection == NULL ||
                                    entity_view_projection_size != 64 || entity_draw_count > 4096 ||
-                                   renderer->entity_pipeline == VK_NULL_HANDLE)) ||
+                                   renderer->entity_pipelines[0] == VK_NULL_HANDLE)) ||
         (particle_draw_count > 0 && (particle_draws == NULL || renderer->particle_pipeline == VK_NULL_HANDLE)) ||
         renderer->composite_pipeline == VK_NULL_HANDLE ||
         renderer->sky_pipeline == VK_NULL_HANDLE ||
@@ -1799,10 +1806,16 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
         }
     }
     if (entity_draw_count > 0) {
-        vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->entity_pipeline);
+        uint32_t bound_entity_pipeline = UINT32_MAX;
         for (uint32_t index = 0; index < entity_draw_count; index++) {
             const PBVulkanEntityDraw *draw = &entity_draws[index];
             if (draw->mesh == NULL || draw->texture == NULL || draw->vertex_count == 0) continue;
+            uint32_t entity_pipeline = draw->depth_mode == 0 ? 0 : 1;
+            if (bound_entity_pipeline != entity_pipeline) {
+                bound_entity_pipeline = entity_pipeline;
+                vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                  renderer->entity_pipelines[entity_pipeline]);
+            }
             VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
             VkDescriptorSetAllocateInfo allocation = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
             allocation.descriptorPool = renderer->entity_descriptor_pool;
