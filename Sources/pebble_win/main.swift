@@ -13,6 +13,7 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
 
       pebble-win [--data-dir <path>] [--world <name-or-id>] [--seed <seed>]
                  [--shader-dir <path>] [--resource-pack <zip>]
+                 [--connect <host:port>] [--open-to-lan]
                  [--screenshot <png>] [--validation] [--fullscreen]
     """)
     exit(0)
@@ -80,12 +81,28 @@ do {
                                    resourcePacks: ResourcePackStack(urls: resourcePackURLs),
                                    customSkinURL: paths.skinPNG)
     game.host = host
-    if let requestedWorld = option("--world"), let record = game.listWorlds().first(where: { $0.id == requestedWorld || $0.name == requestedWorld }) {
-        game.loadWorld(record.id)
-    } else if let first = game.listWorlds().first {
-        game.loadWorld(first.id)
+    if let address = option("--connect") {
+        let endpoint: NetEndpoint
+        switch NetEndpoint.parse(address) {
+        case .success(let parsed): endpoint = parsed
+        case .failure(let error):
+            throw NSError(domain: "PebbleNet", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "invalid server address \(address): \(error)"])
+        }
+        let playerName = game.settings.playerName?.isEmpty == false ? game.settings.playerName! : "Player"
+        let skin = (try? Data(contentsOf: paths.skinPNG)) ?? Data()
+        _ = game.joinLan(netDial(endpoint), name: playerName, skin: skin)
+        print("PEBBLE_CONNECTING endpoint=\(endpoint.description) name=\(playerName)")
     } else {
-        game.createWorld(name: "World", seedText: option("--seed") ?? "", mode: 0, difficulty: 2)
+        if let requestedWorld = option("--world"),
+           let record = game.listWorlds().first(where: { $0.id == requestedWorld || $0.name == requestedWorld }) {
+            game.loadWorld(record.id)
+        } else if let first = game.listWorlds().first {
+            game.loadWorld(first.id)
+        } else {
+            game.createWorld(name: "World", seedText: option("--seed") ?? "", mode: 0, difficulty: 2)
+        }
+        if CommandLine.arguments.contains("--open-to-lan") { _ = game.startLanHost() }
     }
     window.setRelativeMouse(true)
     if CommandLine.arguments.contains("--fullscreen") { try window.setFullscreen(true) }
