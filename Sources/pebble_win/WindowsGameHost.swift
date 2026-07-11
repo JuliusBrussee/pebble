@@ -103,7 +103,7 @@ final class WindowsGameHost: GameHost {
         mixer.setVolumes(master: game.settings.volumes["master"] ?? 0.8,
                          categories: game.settings.volumes.filter { $0.key != "master" })
         guard game.hasWorld() else {
-            return emptyFrame(target: target, timeSec: timeSec)
+            return emptyFrame(game: game, target: target, timeSec: timeSec)
         }
         let cam = game.camState(partial, timeSec: timeSec)
         let aspect = Float(target.width) / Float(max(1, target.height))
@@ -595,6 +595,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(0.03, 0.04, 0.06, 0.92))
                 _ = uiCanvas.text("> " + textBuffer + "_", x: 24, y: height - 48, scale: 2,
                                   color: SIMD4<Float>(1, 1, 1, 1))
+            } else if screenKind == "title" {
+                appendTitleScreen(game: game, width: width, height: height)
             } else if screenKind == "pause" || screenKind == "death" {
                 appendActionScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
@@ -631,6 +633,25 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendTitleScreen(game: GameCore, width: Float, height: Float) {
+        uiCanvas.gradientRect(x: 0, y: 0, width: width, height: height,
+                              top: SIMD4<Float>(0.035, 0.07, 0.13, 1),
+                              bottom: SIMD4<Float>(0.12, 0.2, 0.18, 1))
+        uiCanvas.textCentered("PEBBLE", centerX: width / 2, y: height * 0.2,
+                              scale: 8, color: SIMD4<Float>(0.85, 0.94, 1, 1))
+        uiCanvas.textCentered("A BLOCK SURVIVAL WORLD", centerX: width / 2, y: height * 0.2 + 70,
+                              scale: 1.8, color: SIMD4<Float>(0.68, 0.76, 0.82, 1))
+        let buttonX = width / 2 - 150
+        let buttonY = height * 0.48
+        let worlds = game.listWorlds()
+        actionButton(worlds.isEmpty ? "CREATE WORLD" : "PLAY \(worlds[0].name.uppercased())",
+                     x: buttonX, y: buttonY, width: 300)
+        actionButton("NEW WORLD", x: buttonX, y: buttonY + 50, width: 300)
+        actionButton("QUIT", x: buttonX, y: buttonY + 100, width: 300)
+        uiCanvas.textCentered("SDL3 + VULKAN", centerX: width / 2, y: height - 34,
+                              scale: 1.2, color: SIMD4<Float>(0.55, 0.62, 0.68, 1))
     }
 
     private func appendActionScreen(game: GameCore, width: Float, height: Float) {
@@ -761,6 +782,10 @@ final class WindowsGameHost: GameHost {
     func screenMouse(x: Float, y: Float) { screenMousePosition = SIMD2<Float>(x, y) }
 
     func screenMouseButton(_ button: Int, game: GameCore) {
+        if button == 0, screenOpen, screenKind == "title" {
+            handleTitleClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
             handleActionScreenClick(game: game)
             return
@@ -803,6 +828,26 @@ final class WindowsGameHost: GameHost {
                 }
                 if carried.count <= 0 { carriedStack = nil }
             }
+        }
+        playUI("ui.button.click")
+    }
+
+    private func handleTitleClick(game: GameCore) {
+        let x = screenMousePosition.x
+        let y = screenMousePosition.y
+        let buttonX = lastScreenSize.x / 2 - 150
+        let buttonY = lastScreenSize.y * 0.48
+        guard x >= buttonX && x < buttonX + 300 else { return }
+        if y >= buttonY && y < buttonY + 34 {
+            if let first = game.listWorlds().first { game.loadWorld(first.id) }
+            else { game.createWorld(name: "World", seedText: "", mode: 0, difficulty: 2) }
+            closeAllScreens()
+        } else if y >= buttonY + 50 && y < buttonY + 84 {
+            let number = game.listWorlds().count + 1
+            game.createWorld(name: "World \(number)", seedText: "", mode: 0, difficulty: 2)
+            closeAllScreens()
+        } else if y >= buttonY + 100 && y < buttonY + 134 {
+            exitRequested = true
         }
         playUI("ui.button.click")
     }
@@ -1005,12 +1050,14 @@ final class WindowsGameHost: GameHost {
         }
     }
 
-    private func emptyFrame(target: RenderTarget, timeSec: Double) -> FramePacket {
+    private func emptyFrame(game: GameCore, target: RenderTarget, timeSec: Double) -> FramePacket {
         let camera = CameraState(viewProj: .identity, invViewProj: .identity, shadowMat: .identity)
         let uniforms = FrameUniforms(time: Float(timeSec), dayLight: 1, gamma: 1, ambient: 1,
                                      fogStart: 0, fogEnd: 1, fogColor: SIMD4<Float>(0.025, 0.045, 0.085, 1),
                                      sunDir: .zero, shadowsOn: false, ultraOn: false)
-        return FrameBuilder(camera: camera, uniforms: uniforms).finish(includeEmptyPasses: false)
+        var builder = FrameBuilder(camera: camera, uniforms: uniforms)
+        appendUI(game: game, target: target, builder: &builder)
+        return builder.finish(includeEmptyPasses: false)
     }
 
     func hasScreen() -> Bool { screenOpen }

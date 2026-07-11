@@ -12,6 +12,7 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
     pebble-win — Pebble SDL3 + Vulkan client
 
       pebble-win [--data-dir <path>] [--world <name-or-id>] [--seed <seed>]
+                 [--autoload]
                  [--shader-dir <path>] [--resource-pack <zip>]
                  [--connect <host:port>] [--open-to-lan]
                  [--screenshot <png>] [--validation] [--fullscreen]
@@ -97,14 +98,17 @@ do {
         if let requestedWorld = option("--world"),
            let record = game.listWorlds().first(where: { $0.id == requestedWorld || $0.name == requestedWorld }) {
             game.loadWorld(record.id)
-        } else if let first = game.listWorlds().first {
-            game.loadWorld(first.id)
+        } else if let seed = option("--seed") {
+            game.createWorld(name: "World \(game.listWorlds().count + 1)", seedText: seed, mode: 0, difficulty: 2)
+        } else if CommandLine.arguments.contains("--autoload") {
+            if let first = game.listWorlds().first { game.loadWorld(first.id) }
+            else { game.createWorld(name: "World", seedText: "", mode: 0, difficulty: 2) }
         } else {
-            game.createWorld(name: "World", seedText: option("--seed") ?? "", mode: 0, difficulty: 2)
+            host.openTitleScreen()
         }
         if CommandLine.arguments.contains("--open-to-lan") { _ = game.startLanHost() }
     }
-    window.setRelativeMouse(true)
+    window.setRelativeMouse(!host.hasScreen())
     if CommandLine.arguments.contains("--fullscreen") { try window.setFullscreen(true) }
 
     let info = vulkan.info
