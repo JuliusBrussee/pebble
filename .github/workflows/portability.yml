@@ -29,6 +29,7 @@ jobs:
           swift build -c release --target pebsmoke_deterministic
           swift build -c release --target PebbleRenderABI
           swift build -c release --target PebbleCodecs
+          swift build -c release --target PebbleResources
           swift build -c release --target PebbleAudioCore
           swift build -c release --target PebblePlatformNative
           swift build -c release --target PebbleNetNative
@@ -57,7 +58,7 @@ jobs:
       - name: Portable import hygiene
         shell: bash
         run: |
-          if git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|SQLite3|Darwin|simd|CoreGraphics|ImageIO|Compression)|CFAbsoluteTimeGetCurrent|Application Support' -- Sources/PebbleCoreBase Sources/pebsmoke_deterministic Sources/CPebblePlatform Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/pebsmoke_portable; then
+          if git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|SQLite3|Darwin|simd|CoreGraphics|ImageIO|Compression)|CFAbsoluteTimeGetCurrent|Application Support' -- Sources/PebbleCoreBase Sources/pebsmoke_deterministic Sources/CPebblePlatform Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleResources Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/pebsmoke_portable; then
             echo "portable target hygiene failed" >&2
             exit 1
           fi
@@ -92,6 +93,7 @@ jobs:
           swift build -c release --target pebsmoke_deterministic
           swift build -c release --target PebbleRenderABI
           swift build -c release --target PebbleCodecs
+          swift build -c release --target PebbleResources
           swift build -c release --target PebbleAudioCore
           swift build -c release --target PebblePlatformNative
           swift build -c release --target PebbleCore
@@ -110,7 +112,7 @@ jobs:
       - name: Portable import hygiene
         shell: pwsh
         run: |
-          $hits = git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|Darwin|simd|CoreGraphics|ImageIO|Compression)' -- Sources/PebbleCore Sources/PebbleCoreBase Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/PebbleNetNative
+          $hits = git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|Darwin|simd|CoreGraphics|ImageIO|Compression)' -- Sources/PebbleCore Sources/PebbleCoreBase Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleResources Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/PebbleNetNative
           if ($LASTEXITCODE -eq 0) { Write-Output $hits; throw "portable target hygiene failed" }
 
   macos-vulkan:

@@ -11,6 +11,7 @@ Implementation status from current source tree. Work in this porting batch was i
 | Vulkan bootstrap | experimental | experimental | experimental | `CPebbleVulkan`, Vulkan 1.2 instance/device, portability subset, validation positive control, offscreen clear/readback, PNG capture |
 | Vulkan game passes | experimental | experimental | experimental | Chunk, shadow, animated entity, particle, sky/cloud, UI, offscreen composite, and capture paths execute from one frame packet in source; runtime proof still pending |
 | `PebbleCodecs` | experimental | experimental | experimental | PNG, ZIP, DEFLATE; resource-pack consumer now uses portable codecs |
+| `PebbleResources` | experimental | experimental | experimental | ZIP pack stack, custom/player/entity skins, and block atlas replacement use portable codecs |
 | Native audio output | experimental | experimental | experimental | AudioUnit macOS and waveOut Windows C sinks; AVFoundation removed from default path |
 | Portable audio mixer | experimental | experimental | experimental | Shared stereo voice mixer, spatial gain/pan, environment filtering, reverb, native sink facade |
 | Apple networking | shipped | unavailable | shipped on macOS | Network.framework TCP and Bonjour adapter |
