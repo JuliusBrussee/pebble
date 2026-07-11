@@ -4,7 +4,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-struct PBWindow { SDL_Window *window; uint32_t fullscreen; };
+struct PBWindow { SDL_Window *window; uint32_t fullscreen; SDL_Gamepad *gamepads[8]; };
 
 static int pb_sdl_users = 0;
 
@@ -24,6 +24,7 @@ int32_t pb_window_create(const char *title, int32_t width, int32_t height, PBWin
 
 void pb_window_destroy(PBWindow *window) {
     if (window == NULL) return;
+    for (int i = 0; i < 8; i++) if (window->gamepads[i] != NULL) SDL_CloseGamepad(window->gamepads[i]);
     SDL_DestroyWindow(window->window);
     SDL_free(window);
     if (pb_sdl_users > 0) pb_sdl_users--;
@@ -38,6 +39,24 @@ int32_t pb_window_poll_event(PBWindow *window, PBWindowEvent *out_event) {
     memset(out_event, 0, sizeof(PBWindowEvent));
     out_event->struct_size = sizeof(PBWindowEvent);
     switch (event.type) {
+        case SDL_EVENT_GAMEPAD_ADDED:
+            if (window != NULL) {
+                for (int i = 0; i < 8; i++) if (window->gamepads[i] == NULL) {
+                    window->gamepads[i] = SDL_OpenGamepad(event.gdevice.which);
+                    break;
+                }
+            }
+            out_event->type = PB_WINDOW_EVENT_NONE;
+            break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+            if (window != NULL) {
+                for (int i = 0; i < 8; i++) if (window->gamepads[i] != NULL &&
+                    SDL_GetGamepadID(window->gamepads[i]) == event.gdevice.which) {
+                    SDL_CloseGamepad(window->gamepads[i]); window->gamepads[i] = NULL;
+                }
+            }
+            out_event->type = PB_WINDOW_EVENT_NONE;
+            break;
         case SDL_EVENT_QUIT: out_event->type = PB_WINDOW_EVENT_QUIT; break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED:
@@ -62,6 +81,19 @@ int32_t pb_window_poll_event(PBWindow *window, PBWindowEvent *out_event) {
             strncpy(out_event->text, event.text.text, sizeof(out_event->text) - 1); break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED: out_event->type = PB_WINDOW_EVENT_FOCUS_GAINED; break;
         case SDL_EVENT_WINDOW_FOCUS_LOST: out_event->type = PB_WINDOW_EVENT_FOCUS_LOST; break;
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+            out_event->type = PB_WINDOW_EVENT_GAMEPAD_AXIS;
+            out_event->a = (int32_t)event.gaxis.axis;
+            out_event->x = (float)event.gaxis.value / 32767.0f;
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+            out_event->type = PB_WINDOW_EVENT_GAMEPAD_BUTTON_DOWN;
+            out_event->a = (int32_t)event.gbutton.button;
+            break;
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+            out_event->type = PB_WINDOW_EVENT_GAMEPAD_BUTTON_UP;
+            out_event->a = (int32_t)event.gbutton.button;
+            break;
         default: out_event->type = PB_WINDOW_EVENT_NONE; break;
     }
     return 1;

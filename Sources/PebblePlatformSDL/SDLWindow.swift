@@ -16,6 +16,8 @@ public enum WindowEvent: Sendable {
     case mouseWheel(x: Float, y: Float)
     case text(String)
     case focusChanged(Bool)
+    case gamepadAxis(axis: Int, value: Float)
+    case gamepadButton(button: Int, pressed: Bool)
 }
 
 public final class VulkanSurface: @unchecked Sendable {
@@ -120,6 +122,9 @@ public final class SDLWindow: @unchecked Sendable {
                 return .text(text)
             case PB_WINDOW_EVENT_FOCUS_GAINED: return .focusChanged(true)
             case PB_WINDOW_EVENT_FOCUS_LOST: return .focusChanged(false)
+            case PB_WINDOW_EVENT_GAMEPAD_AXIS: return .gamepadAxis(axis: Int(event.a), value: event.x)
+            case PB_WINDOW_EVENT_GAMEPAD_BUTTON_DOWN: return .gamepadButton(button: Int(event.a), pressed: true)
+            case PB_WINDOW_EVENT_GAMEPAD_BUTTON_UP: return .gamepadButton(button: Int(event.a), pressed: false)
             default: continue
             }
         }

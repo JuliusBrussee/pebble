@@ -116,6 +116,16 @@ do {
     var running = true
     var controlHeld = false
     var screenshotRequested = option("--screenshot") != nil
+    var gamepadKeys = Set<String>()
+    var gamepadButtons = Set<Int>()
+    func setGamepadKey(_ code: String, _ down: Bool) {
+        if down, !gamepadKeys.contains(code) {
+            gamepadKeys.insert(code)
+            game.keyDown(code, now: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000)
+        } else if !down, gamepadKeys.remove(code) != nil {
+            game.keyUp(code)
+        }
+    }
     var lastFrame = DispatchTime.now().uptimeNanoseconds
     let startTime = lastFrame
     while running {
@@ -164,9 +174,55 @@ do {
                 if !focused {
                     game.clearInput()
                     controlHeld = false
+                    gamepadKeys.removeAll()
+                    gamepadButtons.removeAll()
                     window.setRelativeMouse(false)
                 } else if !host.hasScreen() {
                     window.setRelativeMouse(true)
+                }
+            case .gamepadAxis(let axis, let value):
+                let deadzone: Float = 0.22
+                switch axis {
+                case 0:
+                    setGamepadKey("KeyA", value < -deadzone)
+                    setGamepadKey("KeyD", value > deadzone)
+                case 1:
+                    setGamepadKey("KeyW", value < -deadzone)
+                    setGamepadKey("KeyS", value > deadzone)
+                case 2 where !host.hasScreen():
+                    if abs(value) > deadzone { game.mouseDelta(Double(value * 14), 0) }
+                case 3 where !host.hasScreen():
+                    if abs(value) > deadzone { game.mouseDelta(0, Double(value * 14)) }
+                case 4 where !host.hasScreen():
+                    if value > 0.55, !gamepadButtons.contains(100) {
+                        gamepadButtons.insert(100); game.mouseDown(2)
+                    } else if value <= 0.55, gamepadButtons.remove(100) != nil { game.mouseUp(2) }
+                case 5 where !host.hasScreen():
+                    if value > 0.55, !gamepadButtons.contains(101) {
+                        gamepadButtons.insert(101); game.mouseDown(0)
+                    } else if value <= 0.55, gamepadButtons.remove(101) != nil { game.mouseUp(0) }
+                default: break
+                }
+            case .gamepadButton(let button, let pressed):
+                let code: String?
+                switch button {
+                case 0: code = "Space"
+                case 1: code = "Escape"
+                case 2: code = "KeyE"
+                case 3: code = "KeyQ"
+                case 6: code = "Escape"
+                case 7: code = "ControlLeft"
+                case 11: code = "ArrowUp"
+                case 12: code = "ArrowDown"
+                case 13: code = "ArrowLeft"
+                case 14: code = "ArrowRight"
+                default: code = nil
+                }
+                if button == 9, pressed { game.wheelHotbar(-1) }
+                else if button == 10, pressed { game.wheelHotbar(1) }
+                else if let code {
+                    if code == "Escape", pressed, host.hasScreen() { _ = host.escapeScreen() }
+                    else { setGamepadKey(code, pressed) }
                 }
             default: break
             }
