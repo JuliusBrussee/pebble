@@ -693,6 +693,34 @@ final class WindowsGameHost: GameHost {
                 layerSize: Float(tile * 256) + Float(size * 100),
                 r: color.x, g: color.y, b: color.z, light: light))
         }
+        for reference in game.world.entities {
+            guard let entity = reference as? Entity, !entity.dead else { continue }
+            if entity is LightningBolt {
+                for segment in 0..<32 {
+                    let jitter = Double(Int(hash2(UInt32(truncatingIfNeeded: entity.id), segment, entity.age / 2) % 100)) / 500 - 0.1
+                    instances.append(ParticleInstance(
+                        x: Float(entity.x + jitter - cameraPosition.x),
+                        y: Float(entity.y + Double(segment) * 1.25 - cameraPosition.y),
+                        z: Float(entity.z - jitter - cameraPosition.z),
+                        u0: 0, v0: 0, u1: 1, v1: 1,
+                        layerSize: Float(tileId("crit_particle") * 256 + 12),
+                        r: 0.78, g: 0.88, b: 1, light: 1))
+                }
+            } else if let crystal = entity as? EndCrystal, let target = crystal.beamTarget {
+                let start = SIMD3<Double>(crystal.x, crystal.y + 1, crystal.z)
+                let end = SIMD3<Double>(Double(target.0) + 0.5, Double(target.1) + 0.5, Double(target.2) + 0.5)
+                let delta = end - start
+                let steps = max(2, min(96, Int(sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z) * 2)))
+                for step in 0...steps {
+                    let position = start + delta * (Double(step) / Double(steps))
+                    instances.append(ParticleInstance(
+                        x: Float(position.x - cameraPosition.x), y: Float(position.y - cameraPosition.y),
+                        z: Float(position.z - cameraPosition.z), u0: 0, v0: 0, u1: 1, v1: 1,
+                        layerSize: Float(tileId("portal_particle") * 256 + 9),
+                        r: 0.95, g: 0.25, b: 1, light: 1))
+                }
+            }
+        }
     }
 
     private func spawnParticles(_ type: String, x: Double, y: Double, z: Double,
