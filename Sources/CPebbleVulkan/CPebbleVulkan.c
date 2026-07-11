@@ -132,6 +132,12 @@ struct PBVulkanChunkRenderer {
     size_t composite_vertex_spirv_size;
     uint8_t *composite_fragment_spirv;
     size_t composite_fragment_spirv_size;
+    VkPipelineLayout sky_pipeline_layout;
+    VkPipeline sky_pipeline;
+    uint8_t *sky_vertex_spirv;
+    size_t sky_vertex_spirv_size;
+    uint8_t *sky_fragment_spirv;
+    size_t sky_fragment_spirv_size;
 };
 
 static PBVK_THREAD_LOCAL char pbvk_error[512];
@@ -1029,6 +1035,59 @@ static PBVulkanStatus pbvk_composite_pipeline_build(PBVulkanChunkRenderer *rende
         : pbvk_fail(PB_VULKAN_RENDER_FAILED, "composite graphics pipeline creation failed", result);
 }
 
+static void pbvk_sky_pipeline_release(PBVulkanChunkRenderer *renderer) {
+    if (renderer->sky_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(renderer->swapchain->context->device, renderer->sky_pipeline, NULL);
+        renderer->sky_pipeline = VK_NULL_HANDLE;
+    }
+}
+
+static PBVulkanStatus pbvk_sky_pipeline_build(PBVulkanChunkRenderer *renderer) {
+    if (renderer->sky_vertex_spirv == NULL || renderer->sky_fragment_spirv == NULL) return PB_VULKAN_OK;
+    PBVulkanContext *context = renderer->swapchain->context;
+    VkShaderModule vertex = pbvk_shader_module(context, renderer->sky_vertex_spirv, renderer->sky_vertex_spirv_size);
+    VkShaderModule fragment = pbvk_shader_module(context, renderer->sky_fragment_spirv, renderer->sky_fragment_spirv_size);
+    if (vertex == VK_NULL_HANDLE || fragment == VK_NULL_HANDLE) {
+        if (vertex != VK_NULL_HANDLE) vkDestroyShaderModule(context->device, vertex, NULL);
+        if (fragment != VK_NULL_HANDLE) vkDestroyShaderModule(context->device, fragment, NULL);
+        return pbvk_fail(PB_VULKAN_RENDER_FAILED, "sky shader module creation failed", VK_ERROR_UNKNOWN);
+    }
+    VkPipelineShaderStageCreateInfo stages[2]; memset(stages, 0, sizeof(stages));
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT; stages[0].module = vertex; stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT; stages[1].module = fragment; stages[1].pName = "main";
+    VkPipelineVertexInputStateCreateInfo vertex_input = {VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    VkPipelineInputAssemblyStateCreateInfo assembly = {VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+    assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineViewportStateCreateInfo viewport = {VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+    viewport.viewportCount = 1; viewport.scissorCount = 1;
+    VkPipelineRasterizationStateCreateInfo raster = {VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+    raster.polygonMode = VK_POLYGON_MODE_FILL; raster.cullMode = VK_CULL_MODE_NONE; raster.lineWidth = 1;
+    VkPipelineMultisampleStateCreateInfo multisample = {VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineDepthStencilStateCreateInfo depth = {VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+    depth.depthTestEnable = VK_FALSE; depth.depthWriteEnable = VK_FALSE;
+    VkPipelineColorBlendAttachmentState attachment = {0}; attachment.colorWriteMask = 0xf;
+    VkPipelineColorBlendStateCreateInfo blend = {VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+    blend.attachmentCount = 1; blend.pAttachments = &attachment;
+    VkDynamicState states[2] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+    dynamic.dynamicStateCount = 2; dynamic.pDynamicStates = states;
+    VkGraphicsPipelineCreateInfo pipeline = {VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+    pipeline.stageCount = 2; pipeline.pStages = stages;
+    pipeline.pVertexInputState = &vertex_input; pipeline.pInputAssemblyState = &assembly;
+    pipeline.pViewportState = &viewport; pipeline.pRasterizationState = &raster;
+    pipeline.pMultisampleState = &multisample; pipeline.pDepthStencilState = &depth;
+    pipeline.pColorBlendState = &blend; pipeline.pDynamicState = &dynamic;
+    pipeline.layout = renderer->sky_pipeline_layout; pipeline.renderPass = renderer->swapchain->render_pass;
+    VkResult result = vkCreateGraphicsPipelines(context->device, VK_NULL_HANDLE, 1, &pipeline, NULL,
+                                                 &renderer->sky_pipeline);
+    vkDestroyShaderModule(context->device, vertex, NULL); vkDestroyShaderModule(context->device, fragment, NULL);
+    return result == VK_SUCCESS ? PB_VULKAN_OK
+        : pbvk_fail(PB_VULKAN_RENDER_FAILED, "sky graphics pipeline creation failed", result);
+}
+
 static void pbvk_shadow_release(PBVulkanChunkRenderer *renderer) {
     VkDevice device = renderer->swapchain->context->device;
     if (renderer->shadow_pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, renderer->shadow_pipeline, NULL);
@@ -1361,11 +1420,13 @@ PBVulkanStatus pb_vulkan_chunk_renderer_rebuild(PBVulkanChunkRenderer *renderer)
     pbvk_entity_pipeline_release(renderer);
     pbvk_particle_pipeline_release(renderer);
     pbvk_composite_pipeline_release(renderer);
+    pbvk_sky_pipeline_release(renderer);
     PBVulkanStatus status = pbvk_chunk_pipelines_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_ui_pipeline_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_entity_pipeline_build(renderer);
     if (status == PB_VULKAN_OK) status = pbvk_particle_pipeline_build(renderer);
-    return status == PB_VULKAN_OK ? pbvk_composite_pipeline_build(renderer) : status;
+    if (status == PB_VULKAN_OK) status = pbvk_composite_pipeline_build(renderer);
+    return status == PB_VULKAN_OK ? pbvk_sky_pipeline_build(renderer) : status;
 }
 
 PBVulkanStatus pb_vulkan_chunk_renderer_install_ui(PBVulkanChunkRenderer *renderer,
@@ -1549,6 +1610,31 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_postprocess(PBVulkanChunkRendere
     return pbvk_composite_pipeline_build(renderer);
 }
 
+PBVulkanStatus pb_vulkan_chunk_renderer_install_sky(PBVulkanChunkRenderer *renderer,
+                                                    const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                    const uint8_t *fragment_spirv, size_t fragment_spirv_size) {
+    if (renderer == NULL || vertex_spirv == NULL || fragment_spirv == NULL ||
+        vertex_spirv_size == 0 || fragment_spirv_size == 0) return PB_VULKAN_BAD_ARGUMENT;
+    renderer->sky_vertex_spirv = (uint8_t *)malloc(vertex_spirv_size);
+    renderer->sky_fragment_spirv = (uint8_t *)malloc(fragment_spirv_size);
+    if (renderer->sky_vertex_spirv == NULL || renderer->sky_fragment_spirv == NULL) {
+        free(renderer->sky_vertex_spirv); renderer->sky_vertex_spirv = NULL;
+        free(renderer->sky_fragment_spirv); renderer->sky_fragment_spirv = NULL;
+        return PB_VULKAN_OUT_OF_MEMORY;
+    }
+    memcpy(renderer->sky_vertex_spirv, vertex_spirv, vertex_spirv_size);
+    memcpy(renderer->sky_fragment_spirv, fragment_spirv, fragment_spirv_size);
+    renderer->sky_vertex_spirv_size = vertex_spirv_size;
+    renderer->sky_fragment_spirv_size = fragment_spirv_size;
+    VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48};
+    VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
+    VkResult result = vkCreatePipelineLayout(renderer->swapchain->context->device, &layout, NULL,
+                                              &renderer->sky_pipeline_layout);
+    if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "sky pipeline layout failed", result);
+    return pbvk_sky_pipeline_build(renderer);
+}
+
 PBVulkanStatus pb_vulkan_chunk_renderer_set_ui_texture(PBVulkanChunkRenderer *renderer,
                                                        PBVulkanTexture *texture) {
     if (renderer == NULL || texture == NULL || renderer->ui_descriptor_set == VK_NULL_HANDLE) return PB_VULKAN_BAD_ARGUMENT;
@@ -1577,6 +1663,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
                                    entity_view_projection_size != 64 || renderer->entity_pipeline == VK_NULL_HANDLE)) ||
         (particle_draw_count > 0 && (particle_draws == NULL || renderer->particle_pipeline == VK_NULL_HANDLE)) ||
         renderer->composite_pipeline == VK_NULL_HANDLE ||
+        renderer->sky_pipeline == VK_NULL_HANDLE ||
         renderer->atlas == NULL || (ui_draw_count > 0 && (renderer->ui_pipeline == VK_NULL_HANDLE || renderer->ui_texture == NULL))) {
         return PB_VULKAN_BAD_ARGUMENT;
     }
@@ -1657,6 +1744,14 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     VkRect2D scissor = {{0, 0}, swapchain->extent};
     vkCmdSetViewport(command, 0, 1, &viewport);
     vkCmdSetScissor(command, 0, 1, &scissor);
+    float sky_constants[12] = {0};
+    memcpy(sky_constants, shared_uniforms + 160, 16);
+    memcpy(&sky_constants[4], shared_uniforms + 128, 4);
+    memcpy(&sky_constants[5], shared_uniforms + 176, 4);
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->sky_pipeline);
+    vkCmdPushConstants(command, renderer->sky_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(sky_constants), sky_constants);
+    vkCmdDraw(command, 3, 1, 0, 0);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->pipeline_layout,
                             0, 1, &renderer->descriptor_set, 0, NULL);
     uint32_t bound_pipeline = UINT32_MAX;
@@ -1837,6 +1932,7 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
         pbvk_entity_pipeline_release(renderer);
         pbvk_particle_pipeline_release(renderer);
         pbvk_composite_pipeline_release(renderer);
+        pbvk_sky_pipeline_release(renderer);
         pbvk_shadow_release(renderer);
         if (renderer->uniform_buffer != VK_NULL_HANDLE) vkDestroyBuffer(context->device, renderer->uniform_buffer, NULL);
         if (renderer->uniform_memory != VK_NULL_HANDLE) vkFreeMemory(context->device, renderer->uniform_memory, NULL);
@@ -1856,6 +1952,7 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
         if (renderer->composite_descriptor_pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(context->device, renderer->composite_descriptor_pool, NULL);
         if (renderer->composite_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->composite_pipeline_layout, NULL);
         if (renderer->composite_descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(context->device, renderer->composite_descriptor_layout, NULL);
+        if (renderer->sky_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->sky_pipeline_layout, NULL);
     }
     free(renderer->vertex_spirv);
     free(renderer->fragment_spirv);
@@ -1868,6 +1965,8 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
     free(renderer->particle_fragment_spirv);
     free(renderer->composite_vertex_spirv);
     free(renderer->composite_fragment_spirv);
+    free(renderer->sky_vertex_spirv);
+    free(renderer->sky_fragment_spirv);
     free(renderer);
 }
 

@@ -129,6 +129,9 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_particles(PBVulkanChunkRenderer 
 PBVulkanStatus pb_vulkan_chunk_renderer_install_postprocess(PBVulkanChunkRenderer *renderer,
                                                             const uint8_t *vertex_spirv, size_t vertex_spirv_size,
                                                             const uint8_t *fragment_spirv, size_t fragment_spirv_size);
+PBVulkanStatus pb_vulkan_chunk_renderer_install_sky(PBVulkanChunkRenderer *renderer,
+                                                    const uint8_t *vertex_spirv, size_t vertex_spirv_size,
+                                                    const uint8_t *fragment_spirv, size_t fragment_spirv_size);
 PBVulkanStatus pb_vulkan_chunk_renderer_set_ui_texture(PBVulkanChunkRenderer *renderer,
                                                        PBVulkanTexture *texture);
 PBVulkanStatus pb_vulkan_chunk_renderer_present(PBVulkanChunkRenderer *renderer,

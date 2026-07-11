@@ -91,6 +91,18 @@ private final class VulkanChunkFrameRenderer: @unchecked Sendable {
         guard status == PB_VULKAN_OK else { throw error(status) }
     }
 
+    func installSky(vertexSPIRV: Data, fragmentSPIRV: Data) throws {
+        let status = vertexSPIRV.withUnsafeBytes { vertex in
+            fragmentSPIRV.withUnsafeBytes { fragment in
+                pb_vulkan_chunk_renderer_install_sky(
+                    handle,
+                    vertex.bindMemory(to: UInt8.self).baseAddress, vertex.count,
+                    fragment.bindMemory(to: UInt8.self).baseAddress, fragment.count)
+            }
+        }
+        guard status == PB_VULKAN_OK else { throw error(status) }
+    }
+
     func setUITexture(_ texture: VulkanTextureResource) throws {
         let status = pb_vulkan_chunk_renderer_set_ui_texture(handle, texture.nativeHandle)
         guard status == PB_VULKAN_OK else { throw error(status) }
@@ -168,6 +180,9 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
         let fullscreenVertex = try Data(contentsOf: shaderDirectory.appendingPathComponent("fullscreen.vert.spv"))
         let compositeFragment = try Data(contentsOf: shaderDirectory.appendingPathComponent("composite.frag.spv"))
         try chunkRenderer.installPostprocess(vertexSPIRV: fullscreenVertex, fragmentSPIRV: compositeFragment)
+        let skyVertex = try Data(contentsOf: shaderDirectory.appendingPathComponent("sky.vert.spv"))
+        let skyFragment = try Data(contentsOf: shaderDirectory.appendingPathComponent("sky.frag.spv"))
+        try chunkRenderer.installSky(vertexSPIRV: skyVertex, fragmentSPIRV: skyFragment)
         let whiteHandle = try resources.createTexture(RenderTextureData(
             width: 1, height: 1, format: .rgba8Unorm, bytes: [255, 255, 255, 255]))
         if let white = resources.texture(whiteHandle) { try chunkRenderer.setUITexture(white) }
