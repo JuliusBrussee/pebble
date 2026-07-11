@@ -96,6 +96,8 @@ final class WindowsGameHost: GameHost {
     private var anvilLeft: ItemStack?
     private var anvilRight: ItemStack?
     private var anvilName = ""
+    private var grindstoneTop: ItemStack?
+    private var grindstoneBottom: ItemStack?
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -922,6 +924,8 @@ final class WindowsGameHost: GameHost {
                 appendEnchantingScreen(game: game, width: width, height: height)
             } else if screenKind == "anvil" {
                 appendAnvilScreen(game: game, width: width, height: height)
+            } else if screenKind == "grindstone" {
+                appendGrindstoneScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1375,6 +1379,39 @@ final class WindowsGameHost: GameHost {
         if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
+    private func appendGrindstoneScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let panelWidth: Float = 406, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.11, 0.105, 0.1, 0.98))
+        _ = uiCanvas.text("REPAIR AND DISENCHANT", x: panelX + 14, y: panelY + 14, scale: 1.7)
+        inventorySlot(grindstoneTop, x: panelX + 48, y: panelY + 58, selected: false)
+        inventorySlot(grindstoneBottom, x: panelX + 48, y: panelY + 108, selected: false)
+        _ = uiCanvas.text("->", x: panelX + 120, y: panelY + 91, scale: 2.5)
+        let result = grindstoneResult(grindstoneTop, grindstoneBottom)
+        inventorySlot(result?.out, x: panelX + 190, y: panelY + 84, selected: true)
+        if let result, result.xp > 0 {
+            _ = uiCanvas.text("RETURNS \(result.xp) XP", x: panelX + 246, y: panelY + 98,
+                              scale: 1.1, color: SIMD4<Float>(0.5, 1, 0.3, 1))
+        }
+        appendWorkstationInventory(player: player, panelX: panelX, panelY: panelY)
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
+    private func appendWorkstationInventory(player: Player, panelX: Float, panelY: Float) {
+        let slot: Float = 42, inventoryY = panelY + 220
+        for row in 0..<3 { for column in 0..<9 {
+            let index = 9 + row * 9 + column
+            inventorySlot(player.inventory[index], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + Float(row) * slot, selected: false)
+        }}
+        for column in 0..<9 {
+            inventorySlot(player.inventory[column], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + 3 * slot + 10, selected: column == player.selectedSlot)
+        }
+    }
+
     private func inventorySlot(_ stack: ItemStack?, x: Float, y: Float, selected: Bool) {
         uiCanvas.fillRect(x: x, y: y, width: 38, height: 38,
                           color: selected ? SIMD4<Float>(0.8, 0.82, 0.9, 1)
@@ -1438,6 +1475,10 @@ final class WindowsGameHost: GameHost {
         }
         if screenOpen, screenKind == "anvil" {
             handleAnvilClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "grindstone" {
+            handleGrindstoneClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -2019,6 +2060,51 @@ final class WindowsGameHost: GameHost {
         anvilLeft = nil; anvilRight = nil; anvilName = ""
     }
 
+    private func workstationInventoryIndex(panelX: Float, panelY: Float) -> Int? {
+        let slot: Float = 42, inventoryY = panelY + 220
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        let column = Int((x - panelX - 14) / slot)
+        guard x >= panelX + 14, column >= 0, column < 9,
+              (x - panelX - 14).truncatingRemainder(dividingBy: slot) < 38 else { return nil }
+        let row = Int((y - inventoryY) / slot)
+        if y >= inventoryY, row >= 0, row < 3,
+           (y - inventoryY).truncatingRemainder(dividingBy: slot) < 38 { return 9 + row * 9 + column }
+        let hotbarY = inventoryY + 3 * slot + 10
+        return y >= hotbarY && y < hotbarY + 38 ? column : nil
+    }
+
+    private func handleGrindstoneClick(button: Int, game: GameCore) {
+        guard let player = game.player else { return }
+        let panelX = (lastScreenSize.x - 406) / 2, panelY = (lastScreenSize.y - 392) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        if x >= panelX + 48, x < panelX + 86, y >= panelY + 58, y < panelY + 96 {
+            transferSlot(button: button, get: { self.grindstoneTop }, set: { self.grindstoneTop = $0 })
+        } else if x >= panelX + 48, x < panelX + 86, y >= panelY + 108, y < panelY + 146 {
+            transferSlot(button: button, get: { self.grindstoneBottom }, set: { self.grindstoneBottom = $0 })
+        } else if x >= panelX + 190, x < panelX + 228, y >= panelY + 84, y < panelY + 122 {
+            guard let result = grindstoneResult(grindstoneTop, grindstoneBottom) else { return }
+            if let carried = carriedStack {
+                guard carried.id == result.out.id,
+                      carried.count + result.out.count <= itemDef(result.out.id).maxStack else { return }
+                carried.count += result.out.count
+            } else { carriedStack = result.out.copy() }
+            grindstoneTop = nil; grindstoneBottom = nil
+            if result.xp > 0 { spawnXP(game.world, player.x, player.y, player.z, result.xp) }
+            playUI("block.grindstone.use")
+        } else if let index = workstationInventoryIndex(panelX: panelX, panelY: panelY) {
+            transferSlot(button: button, get: { player.inventory[index] }, set: { player.inventory[index] = $0 })
+        } else { return }
+        playUI("ui.button.click")
+    }
+
+    private func returnGrindstoneItems() {
+        guard let game = activeGame, let player = game.player else { return }
+        for stack in [grindstoneTop, grindstoneBottom].compactMap({ $0 }) {
+            if !player.give(stack) { _ = spawnItem(game.world, player.x, player.y, player.z, stack) }
+        }
+        grindstoneTop = nil; grindstoneBottom = nil
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -2141,6 +2227,7 @@ final class WindowsGameHost: GameHost {
            kind != screenKind { returnInventoryCraftingGrid() }
         if screenOpen, screenKind == "enchanting", kind != "enchanting" { returnEnchantingItems() }
         if screenOpen, screenKind == "anvil", kind != "anvil" { returnAnvilItems() }
+        if screenOpen, screenKind == "grindstone", kind != "grindstone" { returnGrindstoneItems() }
         screenKind = kind; screenData = data; screenOpen = true
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
@@ -2191,6 +2278,7 @@ final class WindowsGameHost: GameHost {
         if screenKind == "inventory" || screenKind == "creative" { returnInventoryCraftingGrid() }
         if screenKind == "enchanting" { returnEnchantingItems() }
         if screenKind == "anvil" { returnAnvilItems() }
+        if screenKind == "grindstone" { returnGrindstoneItems() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
