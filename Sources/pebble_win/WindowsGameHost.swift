@@ -72,6 +72,7 @@ final class WindowsGameHost: GameHost {
     private var screenData: ScreenData?
     private var screenMessage = ""
     private(set) var exitRequested = false
+    private var screenReturnKind = "title"
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -597,6 +598,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(1, 1, 1, 1))
             } else if screenKind == "title" {
                 appendTitleScreen(game: game, width: width, height: height)
+            } else if screenKind == "options" {
+                appendOptionsScreen(game: game, width: width, height: height)
             } else if screenKind == "pause" || screenKind == "death" {
                 appendActionScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
@@ -635,6 +638,25 @@ final class WindowsGameHost: GameHost {
                         vertexRange: 0..<UInt32(batch.vertices.count))
     }
 
+    private func appendOptionsScreen(game: GameCore, width: Float, height: Float) {
+        uiCanvas.textCentered("OPTIONS", centerX: width / 2, y: height * 0.18, scale: 4)
+        let x = width / 2 - 190
+        let y = height * 0.34
+        let rows = [
+            "RENDER DISTANCE  \(game.settings.renderDistance)",
+            "SHADOWS  \(game.settings.shadows ? "ON" : "OFF")",
+            "CLOUDS  \(game.settings.clouds ? "ON" : "OFF")",
+            "BRIGHTNESS  \(Int(game.settings.gamma * 100))%",
+            "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
+            "MASTER VOLUME  \(Int((game.settings.volumes["master"] ?? 0.8) * 100))%",
+            "MUSIC VOLUME  \(Int((game.settings.volumes["music"] ?? 0.5) * 100))%",
+        ]
+        for (index, title) in rows.enumerated() {
+            actionButton(title, x: x, y: y + Float(index) * 42, width: 380)
+        }
+        actionButton("DONE", x: x, y: y + Float(rows.count) * 42, width: 380)
+    }
+
     private func appendTitleScreen(game: GameCore, width: Float, height: Float) {
         uiCanvas.gradientRect(x: 0, y: 0, width: width, height: height,
                               top: SIMD4<Float>(0.035, 0.07, 0.13, 1),
@@ -649,7 +671,8 @@ final class WindowsGameHost: GameHost {
         actionButton(worlds.isEmpty ? "CREATE WORLD" : "PLAY \(worlds[0].name.uppercased())",
                      x: buttonX, y: buttonY, width: 300)
         actionButton("NEW WORLD", x: buttonX, y: buttonY + 50, width: 300)
-        actionButton("QUIT", x: buttonX, y: buttonY + 100, width: 300)
+        actionButton("OPTIONS", x: buttonX, y: buttonY + 100, width: 300)
+        actionButton("QUIT", x: buttonX, y: buttonY + 150, width: 300)
         uiCanvas.textCentered("SDL3 + VULKAN", centerX: width / 2, y: height - 34,
                               scale: 1.2, color: SIMD4<Float>(0.55, 0.62, 0.68, 1))
     }
@@ -668,7 +691,8 @@ final class WindowsGameHost: GameHost {
             actionButton("BACK TO GAME", x: centerX - 130, y: height / 2 - 54, width: 260)
             let lanTitle = game.netHost != nil ? "LAN OPEN" : game.netGuest != nil ? "CONNECTED" : "OPEN TO LAN"
             actionButton(lanTitle, x: centerX - 130, y: height / 2 - 6, width: 260)
-            actionButton("SAVE AND QUIT", x: centerX - 130, y: height / 2 + 42, width: 260)
+            actionButton("OPTIONS", x: centerX - 130, y: height / 2 + 42, width: 260)
+            actionButton("SAVE AND QUIT", x: centerX - 130, y: height / 2 + 90, width: 260)
         }
     }
 
@@ -782,6 +806,10 @@ final class WindowsGameHost: GameHost {
     func screenMouse(x: Float, y: Float) { screenMousePosition = SIMD2<Float>(x, y) }
 
     func screenMouseButton(_ button: Int, game: GameCore) {
+        if button == 0, screenOpen, screenKind == "options" {
+            handleOptionsClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "title" {
             handleTitleClick(game: game)
             return
@@ -847,8 +875,37 @@ final class WindowsGameHost: GameHost {
             game.createWorld(name: "World \(number)", seedText: "", mode: 0, difficulty: 2)
             closeAllScreens()
         } else if y >= buttonY + 100 && y < buttonY + 134 {
+            screenReturnKind = "title"; screenKind = "options"
+        } else if y >= buttonY + 150 && y < buttonY + 184 {
             exitRequested = true
         }
+        playUI("ui.button.click")
+    }
+
+    private func handleOptionsClick(game: GameCore) {
+        let x = lastScreenSize.x / 2 - 190
+        let y = lastScreenSize.y * 0.34
+        guard screenMousePosition.x >= x && screenMousePosition.x < x + 380 else { return }
+        let localY = screenMousePosition.y - y
+        let row = Int(localY / 42)
+        guard localY >= 0 else { return }
+        switch row {
+        case 0: game.settings.renderDistance = game.settings.renderDistance >= 24 ? 4 : game.settings.renderDistance + 2
+        case 1: game.settings.shadows.toggle()
+        case 2: game.settings.clouds.toggle()
+        case 3: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
+        case 4: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
+        case 5:
+            let value = game.settings.volumes["master"] ?? 0.8
+            game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
+        case 6:
+            let value = game.settings.volumes["music"] ?? 0.5
+            game.settings.volumes["music"] = value >= 1 ? 0 : min(1, value + 0.1)
+        case 7:
+            game.applySettings(); screenKind = screenReturnKind
+        default: return
+        }
+        game.applySettings()
         playUI("ui.button.click")
     }
 
@@ -868,6 +925,8 @@ final class WindowsGameHost: GameHost {
         } else if y >= lastScreenSize.y / 2 - 6 && y < lastScreenSize.y / 2 + 28 {
             if game.netHost == nil && game.netGuest == nil, game.startLanHost() { closeAllScreens() }
         } else if y >= lastScreenSize.y / 2 + 42 && y < lastScreenSize.y / 2 + 76 {
+            screenReturnKind = "pause"; screenKind = "options"
+        } else if y >= lastScreenSize.y / 2 + 90 && y < lastScreenSize.y / 2 + 124 {
             game.saveAndFlush(synchronous: true); exitRequested = true
         }
         playUI("ui.button.click")
@@ -1092,6 +1151,7 @@ final class WindowsGameHost: GameHost {
     }
     func escapeScreen() -> Bool {
         guard screenOpen, screenKind != "death" else { return false }
+        if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true
     }

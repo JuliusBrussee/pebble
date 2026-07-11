@@ -136,7 +136,7 @@ do {
                 if code == "Escape", pressed, host.hasScreen() {
                     if host.escapeScreen() {
                         window.setTextInput(false)
-                        window.setRelativeMouse(true)
+                        window.setRelativeMouse(!host.hasScreen())
                     }
                 } else if pressed, host.hasScreen() {
                     if host.screenKey(code, game: game) {
