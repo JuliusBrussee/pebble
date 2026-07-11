@@ -24,6 +24,7 @@ private struct WinEntityResources {
     let texture: TextureHandle
     let vertexCount: UInt32
     let scale: Float
+    let model: MobModel
 }
 
 private struct WinParticle {
@@ -276,12 +277,16 @@ final class WindowsGameHost: GameHost {
                 misc: SIMD4<Float>(uniforms.ambient, 1, uniforms.fogStart, uniforms.fogEnd),
                 overlay: SIMD4<Float>(1, 0.2, 0.2, hurt),
                 fogColor: uniforms.fogColor)
+            let partMatrices = entityPartMatrices(entity, model: resources.model,
+                                                  partial: partial)
+            var packet = RenderBytes.copy(constants)
+            packet.append(contentsOf: RenderBytes.copy(partMatrices))
             builder.addDraw(
                 pass: .entities, pipeline: .entity, mesh: resources.mesh,
                 depthBucket: FrameBuilder.opaqueDepthBucket(distanceSquared: Float(distanceSquared)),
                 vertexRange: 0..<resources.vertexCount,
                 textures: [TextureBinding(index: 0, texture: resources.texture, sampler: nil)],
-                pushConstants: RenderBytes.copy(constants))
+                pushConstants: packet)
         }
     }
 
@@ -310,9 +315,70 @@ final class WindowsGameHost: GameHost {
         }
         let resources = WinEntityResources(mesh: mesh, texture: texture,
                                            vertexCount: UInt32(geometry.vertexCount),
-                                           scale: Float(geometry.model.scale))
+                                           scale: Float(geometry.model.scale), model: geometry.model)
         entityResources[name] = resources
         return resources
+    }
+
+    private func entityPartMatrices(_ entity: Entity, model: MobModel,
+                                    partial: Double) -> [ABIMat4] {
+        let living = entity as? LivingEntity
+        let swing = living?.limbSwing ?? 0
+        let amplitude = living?.limbAmp ?? 0
+        let walkA = detCos(swing * 0.6662) * 1.2 * amplitude
+        let walkB = detCos(swing * 0.6662 + .pi) * 1.2 * amplitude
+        let headYaw = living.map { wrappedAngle($0.headYaw - entity.yaw) } ?? 0
+        let attack = living?.attackAnim ?? 0
+        var matrices = [ABIMat4](repeating: .identity, count: 24)
+        for index in 0..<min(24, model.parts.count) {
+            let part = model.parts[index]
+            var matrix = mat4Identity()
+            matrix = mat4Translate(matrix, Float(part.pivot.0 / 16), Float(part.pivot.1 / 16),
+                                   Float(part.pivot.2 / 16))
+            if part.rot.2 != 0 { matrix = mat4RotateZ(matrix, Float(part.rot.2)) }
+            if part.rot.1 != 0 { matrix = mat4RotateY(matrix, Float(part.rot.1)) }
+            if part.rot.0 != 0 { matrix = mat4RotateX(matrix, Float(part.rot.0)) }
+            let name = part.name
+            switch model.anim {
+            case "biped", "zombie", "skeleton", "illager", "villager", "fly_biped":
+                if name == "head" {
+                    matrix = mat4RotateY(matrix, Float(headYaw))
+                    matrix = mat4RotateX(matrix, Float(-entity.pitch))
+                } else if name == "armR" {
+                    var rotation = walkA * 0.8
+                    if model.anim == "zombie" { rotation = .pi / 2 }
+                    if attack > 0 { rotation += detSin(attack * .pi) * 1.2 }
+                    matrix = mat4RotateX(matrix, Float(rotation))
+                } else if name == "armL" {
+                    matrix = mat4RotateX(matrix, Float(model.anim == "zombie" ? .pi / 2 : walkB * 0.8))
+                } else if name == "legR" {
+                    matrix = mat4RotateX(matrix, Float(walkA))
+                } else if name == "legL" {
+                    matrix = mat4RotateX(matrix, Float(walkB))
+                } else if name == "wingR" || name == "wingL" {
+                    let flap = detSin((Double(entity.age) + partial) * 0.9) * 0.8
+                    matrix = mat4RotateY(matrix, Float(name == "wingR" ? flap : -flap))
+                }
+            case "quadruped", "pig", "cow", "sheep", "wolf", "goat", "horse":
+                if name == "head" { matrix = mat4RotateX(matrix, Float(-entity.pitch)) }
+                else if name.contains("leg") {
+                    let alternate = name.hasSuffix("R") || name.contains("FR") || name.contains("BL")
+                    matrix = mat4RotateX(matrix, Float(alternate ? walkA : walkB))
+                }
+            case "bird", "chicken", "parrot", "bee":
+                if name.contains("wing") {
+                    let flap = detSin((Double(entity.age) + partial) * 1.8) * 0.9
+                    matrix = mat4RotateZ(matrix, Float(name.hasSuffix("R") ? flap : -flap))
+                }
+            case "fish", "squid":
+                if name.contains("tail") || name.contains("tentacle") {
+                    matrix = mat4RotateY(matrix, Float(detSin((Double(entity.age) + partial) * 0.35) * 0.35))
+                }
+            default: break
+            }
+            matrices[index] = abi(matrix)
+        }
+        return matrices
     }
 
     private func entityModelName(_ entity: Entity) -> String? {

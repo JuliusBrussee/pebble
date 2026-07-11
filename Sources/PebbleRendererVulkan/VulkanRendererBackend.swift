@@ -298,7 +298,7 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
                   let texture = resources.texture(binding.texture) else {
                 throw RendererBackendError.invalidResource("entity skin texture is missing")
             }
-            guard draw.pushConstants.count >= EntityDrawPacketConstants.stride else {
+            guard draw.pushConstants.count >= EntityDrawPacketConstants.packetStride else {
                 throw RendererBackendError.invalidResource("entity draw constants are truncated")
             }
             var raw = PBVulkanEntityDraw()
@@ -307,6 +307,11 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
             withUnsafeMutableBytes(of: &raw.constants) { destination in
                 draw.pushConstants.withUnsafeBytes { source in
                     destination.copyBytes(from: source.prefix(EntityDrawPacketConstants.stride))
+                }
+            }
+            withUnsafeMutableBytes(of: &raw.parts) { destination in
+                draw.pushConstants.withUnsafeBytes { source in
+                    destination.copyBytes(from: source[EntityDrawPacketConstants.partsOffset..<EntityDrawPacketConstants.packetStride])
                 }
             }
             raw.vertex_count = UInt32(draw.vertexRange.count)

@@ -95,6 +95,9 @@
     }
 
     public static let stride = 128
+    public static let partsOffset = 128
+    public static let partsStride = 1536
+    public static let packetStride = stride + partsStride
 }
 
 /// celestial_vs/celestial_fs uniforms (buffer index 1) — mirrors `CelestialU`

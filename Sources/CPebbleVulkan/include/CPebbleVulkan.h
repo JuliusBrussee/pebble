@@ -34,6 +34,7 @@ typedef struct PBVulkanEntityDraw {
     PBVulkanMesh *mesh;
     PBVulkanTexture *texture;
     float constants[32];
+    float parts[384];
     uint32_t vertex_count;
     uint32_t first_vertex;
 } PBVulkanEntityDraw;

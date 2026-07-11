@@ -112,6 +112,8 @@ struct PBVulkanChunkRenderer {
     VkDescriptorPool entity_descriptor_pool;
     VkBuffer entity_frame_buffer;
     VkDeviceMemory entity_frame_memory;
+    VkBuffer entity_parts_buffer;
+    VkDeviceMemory entity_parts_memory;
     uint8_t *entity_vertex_spirv;
     size_t entity_vertex_spirv_size;
     uint8_t *entity_fragment_spirv;
@@ -479,6 +481,16 @@ static VkResult pbvk_memory_write(PBVulkanContext *context, VkDeviceMemory memor
                                   const uint8_t *bytes, size_t count) {
     void *mapped = NULL;
     VkResult result = vkMapMemory(context->device, memory, 0, count, 0, &mapped);
+    if (result != VK_SUCCESS) return result;
+    memcpy(mapped, bytes, count);
+    vkUnmapMemory(context->device, memory);
+    return VK_SUCCESS;
+}
+
+static VkResult pbvk_memory_write_at(PBVulkanContext *context, VkDeviceMemory memory,
+                                     VkDeviceSize offset, const uint8_t *bytes, size_t count) {
+    void *mapped = NULL;
+    VkResult result = vkMapMemory(context->device, memory, offset, count, 0, &mapped);
     if (result != VK_SUCCESS) return result;
     memcpy(mapped, bytes, count);
     vkUnmapMemory(context->device, memory);
@@ -1497,14 +1509,16 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_entities(PBVulkanChunkRenderer *
     renderer->entity_vertex_spirv_size = vertex_spirv_size;
     renderer->entity_fragment_spirv_size = fragment_spirv_size;
 
-    VkDescriptorSetLayoutBinding bindings[2];
+    VkDescriptorSetLayoutBinding bindings[3];
     memset(bindings, 0, sizeof(bindings));
     bindings[0].binding = 0; bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[0].descriptorCount = 1; bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     bindings[1].binding = 1; bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     bindings[1].descriptorCount = 1; bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    bindings[2].binding = 2; bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[2].descriptorCount = 1; bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     VkDescriptorSetLayoutCreateInfo descriptor = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    descriptor.bindingCount = 2; descriptor.pBindings = bindings;
+    descriptor.bindingCount = 3; descriptor.pBindings = bindings;
     VkResult result = vkCreateDescriptorSetLayout(context->device, &descriptor, NULL,
                                                    &renderer->entity_descriptor_layout);
     VkPushConstantRange push = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 128};
@@ -1516,9 +1530,12 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_entities(PBVulkanChunkRenderer *
     if (result == VK_SUCCESS) result = pbvk_buffer_create(context, 64, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         &renderer->entity_frame_buffer, &renderer->entity_frame_memory);
+    if (result == VK_SUCCESS) result = pbvk_buffer_create(context, 4096u * 1536u, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        &renderer->entity_parts_buffer, &renderer->entity_parts_memory);
     VkDescriptorPoolSize sizes[2] = {
         {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4096},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4096},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8192},
     };
     VkDescriptorPoolCreateInfo pool = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
     pool.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
@@ -1660,7 +1677,8 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     if (renderer == NULL || shared_uniforms == NULL || shared_uniform_size != 192 ||
         (draw_count > 0 && draws == NULL) || (ui_draw_count > 0 && ui_draws == NULL) ||
         (entity_draw_count > 0 && (entity_draws == NULL || entity_view_projection == NULL ||
-                                   entity_view_projection_size != 64 || renderer->entity_pipeline == VK_NULL_HANDLE)) ||
+                                   entity_view_projection_size != 64 || entity_draw_count > 4096 ||
+                                   renderer->entity_pipeline == VK_NULL_HANDLE)) ||
         (particle_draw_count > 0 && (particle_draws == NULL || renderer->particle_pipeline == VK_NULL_HANDLE)) ||
         renderer->composite_pipeline == VK_NULL_HANDLE ||
         renderer->sky_pipeline == VK_NULL_HANDLE ||
@@ -1676,6 +1694,11 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
         result = pbvk_memory_write(context, renderer->entity_frame_memory, entity_view_projection, 64);
         if (result == VK_SUCCESS) result = vkResetDescriptorPool(context->device,
                                                                  renderer->entity_descriptor_pool, 0);
+        for (uint32_t index = 0; result == VK_SUCCESS && index < entity_draw_count; index++) {
+            result = pbvk_memory_write_at(context, renderer->entity_parts_memory,
+                                          (VkDeviceSize)index * 1536u,
+                                          (const uint8_t *)entity_draws[index].parts, 1536);
+        }
         if (result != VK_SUCCESS) return pbvk_fail(PB_VULKAN_RENDER_FAILED, "entity frame upload failed", result);
     }
     uint32_t image_index = 0;
@@ -1793,7 +1816,8 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
             VkDescriptorImageInfo image = {draw->texture->sampler, draw->texture->view,
                                             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
             VkDescriptorBufferInfo frame = {renderer->entity_frame_buffer, 0, 64};
-            VkWriteDescriptorSet writes[2];
+            VkDescriptorBufferInfo parts = {renderer->entity_parts_buffer, (VkDeviceSize)index * 1536u, 1536};
+            VkWriteDescriptorSet writes[3];
             memset(writes, 0, sizeof(writes));
             writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[0].dstSet = descriptor_set; writes[0].dstBinding = 0;
@@ -1803,7 +1827,11 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
             writes[1].dstSet = descriptor_set; writes[1].dstBinding = 1;
             writes[1].descriptorCount = 1; writes[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             writes[1].pBufferInfo = &frame;
-            vkUpdateDescriptorSets(context->device, 2, writes, 0, NULL);
+            writes[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[2].dstSet = descriptor_set; writes[2].dstBinding = 2;
+            writes[2].descriptorCount = 1; writes[2].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[2].pBufferInfo = &parts;
+            vkUpdateDescriptorSets(context->device, 3, writes, 0, NULL);
             vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->entity_pipeline_layout,
                                     0, 1, &descriptor_set, 0, NULL);
             vkCmdPushConstants(command, renderer->entity_pipeline_layout,
@@ -1944,6 +1972,8 @@ void pb_vulkan_chunk_renderer_destroy(PBVulkanChunkRenderer *renderer) {
         if (renderer->ui_descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(context->device, renderer->ui_descriptor_layout, NULL);
         if (renderer->entity_frame_buffer != VK_NULL_HANDLE) vkDestroyBuffer(context->device, renderer->entity_frame_buffer, NULL);
         if (renderer->entity_frame_memory != VK_NULL_HANDLE) vkFreeMemory(context->device, renderer->entity_frame_memory, NULL);
+        if (renderer->entity_parts_buffer != VK_NULL_HANDLE) vkDestroyBuffer(context->device, renderer->entity_parts_buffer, NULL);
+        if (renderer->entity_parts_memory != VK_NULL_HANDLE) vkFreeMemory(context->device, renderer->entity_parts_memory, NULL);
         if (renderer->entity_descriptor_pool != VK_NULL_HANDLE) vkDestroyDescriptorPool(context->device, renderer->entity_descriptor_pool, NULL);
         if (renderer->entity_pipeline_layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(context->device, renderer->entity_pipeline_layout, NULL);
         if (renderer->entity_descriptor_layout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(context->device, renderer->entity_descriptor_layout, NULL);
