@@ -51,6 +51,8 @@ final class WindowsGameHost: GameHost {
     private var textBuffer = ""
     private let uiCanvas = UICanvasCPU(width: 1, height: 1)
     private var uiMesh: MeshHandle?
+    private var breakingMesh: MeshHandle?
+    private var breakingStage = -1
     private var entityResources: [String: WinEntityResources] = [:]
     private var particles: [WinParticle] = []
     private var particleMesh: MeshHandle?
@@ -95,6 +97,7 @@ final class WindowsGameHost: GameHost {
         audioOutput?.stop()
         if let uiMesh { renderer.destroyMesh(uiMesh) }
         if let particleMesh { renderer.destroyMesh(particleMesh) }
+        if let breakingMesh { renderer.destroyMesh(breakingMesh) }
         for resources in entityResources.values {
             renderer.destroyMesh(resources.mesh)
             renderer.destroyTexture(resources.texture)
@@ -200,6 +203,8 @@ final class WindowsGameHost: GameHost {
             add(section.cutout, .cutout, false)
             add(section.translucent, .translucent, true)
         }
+        appendBreakingOverlay(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
+                              shared: shared, builder: &builder)
         appendEntities(game: game, cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
                        partial: partial, uniforms: uniforms, builder: &builder)
         appendParticles(cameraPosition: SIMD3<Double>(cam.x, cam.y, cam.z),
@@ -301,6 +306,59 @@ final class WindowsGameHost: GameHost {
                 textures: [TextureBinding(index: 0, texture: resources.texture, sampler: nil)],
                 pushConstants: packet)
         }
+    }
+
+    private func appendBreakingOverlay(game: GameCore, cameraPosition: SIMD3<Double>,
+                                       shared: ChunkSharedUniforms, builder: inout FrameBuilder) {
+        guard let player = game.player, player.breakingProgress >= 0 else { return }
+        let stage = min(9, max(0, Int(player.breakingProgress * 10)))
+        if breakingMesh == nil || breakingStage != stage {
+            let meshData = breakingOverlayMesh(stage: stage)
+            if let breakingMesh { try? renderer.updateMesh(breakingMesh, data: meshData) }
+            else { breakingMesh = try? renderer.createMesh(meshData) }
+            breakingStage = stage
+        }
+        guard let breakingMesh else { return }
+        let origin = SIMD3<Float>(Float(Double(player.breakingX) - cameraPosition.x),
+                                  Float(Double(player.breakingY) - cameraPosition.y),
+                                  Float(Double(player.breakingZ) - cameraPosition.z))
+        let constants = ChunkDrawConstants(shared: shared, origin: SIMD4<Float>(origin, 0))
+        builder.addDraw(pass: .world, pipeline: .translucent, mesh: breakingMesh,
+                        depthBucket: 0, indexRange: 0..<36,
+                        textures: [TextureBinding(index: 3, texture: atlas, sampler: nil)],
+                        pushConstants: RenderBytes.copy(constants))
+    }
+
+    private func breakingOverlayMesh(stage: Int) -> RenderMeshData {
+        let layer = UInt32(tileId("destroy_\(stage)"))
+        let packedA = layer | (3 << 15) | (15 << 17) | (15 << 21)
+        let packedB: UInt32 = 0x00ffffff
+        let low: Float = -0.003, high: Float = 1.003
+        let faces: [([SIMD3<Float>], UInt32)] = [
+            ([SIMD3(low, low, low), SIMD3(high, low, low), SIMD3(high, high, low), SIMD3(low, high, low)], 0),
+            ([SIMD3(high, low, high), SIMD3(low, low, high), SIMD3(low, high, high), SIMD3(high, high, high)], 1),
+            ([SIMD3(low, low, high), SIMD3(low, low, low), SIMD3(low, high, low), SIMD3(low, high, high)], 2),
+            ([SIMD3(high, low, low), SIMD3(high, low, high), SIMD3(high, high, high), SIMD3(high, high, low)], 3),
+            ([SIMD3(low, high, low), SIMD3(high, high, low), SIMD3(high, high, high), SIMD3(low, high, high)], 4),
+            ([SIMD3(low, low, high), SIMD3(high, low, high), SIMD3(high, low, low), SIMD3(low, low, low)], 5),
+        ]
+        let uvs = [SIMD2<Float>(0, 1), SIMD2<Float>(1, 1), SIMD2<Float>(1, 0), SIMD2<Float>(0, 0)]
+        var vertices: [ChunkVertex] = []
+        var indices: [UInt32] = []
+        for (faceIndex, face) in faces.enumerated() {
+            let base = UInt32(vertices.count)
+            for index in 0..<4 {
+                let position = face.0[index], uv = uvs[index]
+                vertices.append(ChunkVertex(x: position.x, y: position.y, z: position.z,
+                                            u: uv.x, v: uv.y,
+                                            a: packedA | (face.1 << 12), b: packedB))
+            }
+            indices.append(contentsOf: [base, base + 1, base + 2, base + 2, base + 3, base])
+            _ = faceIndex
+        }
+        return RenderMeshData(vertexLayout: .chunk,
+                              vertexBytes: RenderBytes.copy(vertices),
+                              indexBytes: RenderBytes.copy(indices), indexFormat: .uint32)
     }
 
     private func resourcesForEntity(_ name: String) -> WinEntityResources? {
