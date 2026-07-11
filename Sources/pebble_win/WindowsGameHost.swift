@@ -93,6 +93,10 @@ final class WindowsGameHost: GameHost {
     private var createWorldSeed = ""
     private var createWorldField = 0
     private var createWorldMode = 0
+    private var multiplayerAddress = "127.0.0.1:25565"
+    private var multiplayerName = "Player"
+    private var multiplayerField = 0
+    private var multiplayerMessage = ""
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -891,6 +895,8 @@ final class WindowsGameHost: GameHost {
                 appendTitleScreen(game: game, width: width, height: height)
             } else if screenKind == "create_world" {
                 appendCreateWorldScreen(width: width, height: height)
+            } else if screenKind == "multiplayer" {
+                appendMultiplayerScreen(width: width, height: height)
             } else if screenKind == "options" {
                 appendOptionsScreen(game: game, width: width, height: height)
             } else if screenKind == "trading" {
@@ -1052,8 +1058,9 @@ final class WindowsGameHost: GameHost {
             ? "CONFIRM DELETE" : "DELETE WORLD"
         actionButton(deleteTitle, x: listX + 286, y: buttonY, width: 274)
         actionButton("NEW WORLD", x: listX, y: buttonY + 46, width: 274)
-        actionButton("OPTIONS", x: listX + 286, y: buttonY + 46, width: 274)
-        actionButton("QUIT", x: width / 2 - 137, y: buttonY + 92, width: 274)
+        actionButton("MULTIPLAYER", x: listX + 286, y: buttonY + 46, width: 274)
+        actionButton("OPTIONS", x: listX, y: buttonY + 92, width: 274)
+        actionButton("QUIT", x: listX + 286, y: buttonY + 92, width: 274)
         if worlds.count > 5 {
             uiCanvas.textCentered("MOUSE WHEEL OR ARROW KEYS TO BROWSE", centerX: width / 2,
                                   y: buttonY + 136, scale: 1,
@@ -1093,6 +1100,31 @@ final class WindowsGameHost: GameHost {
         uiCanvas.fillRect(x: x + 2, y: y + 2, width: width - 4, height: 32,
                           color: SIMD4<Float>(0.025, 0.03, 0.04, 1))
         _ = uiCanvas.text(String(value.suffix(34)), x: x + 10, y: y + 11, scale: 1.4)
+    }
+
+    private func appendMultiplayerScreen(width: Float, height: Float) {
+        uiCanvas.gradientRect(x: 0, y: 0, width: width, height: height,
+                              top: SIMD4<Float>(0.035, 0.07, 0.13, 1),
+                              bottom: SIMD4<Float>(0.12, 0.2, 0.18, 1))
+        let panelWidth: Float = 520, panelHeight: Float = 350
+        let x = (width - panelWidth) / 2, y = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: x, y: y, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.04, 0.055, 0.075, 0.96))
+        uiCanvas.textCentered("DIRECT CONNECTION", centerX: width / 2, y: y + 28, scale: 2.8)
+        _ = uiCanvas.text("SERVER ADDRESS", x: x + 48, y: y + 90, scale: 1.3,
+                          color: SIMD4<Float>(0.7, 0.78, 0.84, 1))
+        textField(multiplayerAddress + (multiplayerField == 0 ? "_" : ""),
+                  x: x + 48, y: y + 112, width: panelWidth - 96, focused: multiplayerField == 0)
+        _ = uiCanvas.text("PLAYER NAME", x: x + 48, y: y + 166, scale: 1.3,
+                          color: SIMD4<Float>(0.7, 0.78, 0.84, 1))
+        textField(multiplayerName + (multiplayerField == 1 ? "_" : ""),
+                  x: x + 48, y: y + 188, width: panelWidth - 96, focused: multiplayerField == 1)
+        if !multiplayerMessage.isEmpty {
+            uiCanvas.textCentered(multiplayerMessage, centerX: width / 2, y: y + 244, scale: 1.15,
+                                  color: SIMD4<Float>(1, 0.45, 0.4, 1))
+        }
+        actionButton("CONNECT", x: x + 48, y: y + 292, width: 202)
+        actionButton("CANCEL", x: x + 270, y: y + 292, width: 202)
     }
 
     private func appendActionScreen(game: GameCore, width: Float, height: Float) {
@@ -1246,6 +1278,10 @@ final class WindowsGameHost: GameHost {
             handleCreateWorldClick(game: game)
             return
         }
+        if button == 0, screenOpen, screenKind == "multiplayer" {
+            handleMultiplayerClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
             handleActionScreenClick(game: game)
             return
@@ -1374,8 +1410,10 @@ final class WindowsGameHost: GameHost {
         } else if x >= listX && x < listX + 274 && y >= buttonY + 46 && y < buttonY + 80 {
             beginCreateWorld(game: game)
         } else if x >= listX + 286 && x < listX + 560 && y >= buttonY + 46 && y < buttonY + 80 {
+            beginMultiplayer(game: game)
+        } else if x >= listX && x < listX + 274 && y >= buttonY + 92 && y < buttonY + 126 {
             screenReturnKind = "title"; screenKind = "options"
-        } else if x >= lastScreenSize.x / 2 - 137 && x < lastScreenSize.x / 2 + 137 &&
+        } else if x >= listX + 286 && x < listX + 560 &&
                   y >= buttonY + 92 && y < buttonY + 126 {
             exitRequested = true
         } else {
@@ -1408,6 +1446,45 @@ final class WindowsGameHost: GameHost {
         else if my >= y + 188 && my < y + 224 { createWorldField = 1 }
         else if my >= y + 240 && my < y + 274 { createWorldMode = createWorldMode == 0 ? 1 : 0 }
         else if mx < x + 250 && my >= y + 292 && my < y + 326 { createWorldFromForm(game: game) }
+        else if mx >= x + 270 && my >= y + 292 && my < y + 326 { screenKind = "title" }
+        else { return }
+        playUI("ui.button.click")
+    }
+
+    private func beginMultiplayer(game: GameCore) {
+        multiplayerName = game.settings.playerName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if multiplayerName.isEmpty { multiplayerName = "Player" }
+        multiplayerField = 0
+        multiplayerMessage = ""
+        screenKind = "multiplayer"
+    }
+
+    private func connectFromForm(game: GameCore) {
+        let address = multiplayerAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint: NetEndpoint
+        switch NetEndpoint.parse(address) {
+        case .success(let parsed): endpoint = parsed
+        case .failure(let error):
+            multiplayerMessage = "INVALID ADDRESS: \(error)"
+            return
+        }
+        let name = multiplayerName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { multiplayerMessage = "PLAYER NAME IS REQUIRED"; return }
+        game.settings.playerName = name
+        game.applySettings()
+        let skin = (try? Data(contentsOf: customSkinURL)) ?? Data()
+        _ = game.joinLan(netDial(endpoint), name: name, skin: skin)
+        closeAllScreens()
+    }
+
+    private func handleMultiplayerClick(game: GameCore) {
+        let panelWidth: Float = 520, panelHeight: Float = 350
+        let x = (lastScreenSize.x - panelWidth) / 2, y = (lastScreenSize.y - panelHeight) / 2
+        let mx = screenMousePosition.x, my = screenMousePosition.y
+        guard mx >= x + 48 && mx < x + panelWidth - 48 else { return }
+        if my >= y + 112 && my < y + 148 { multiplayerField = 0 }
+        else if my >= y + 188 && my < y + 224 { multiplayerField = 1 }
+        else if mx < x + 250 && my >= y + 292 && my < y + 326 { connectFromForm(game: game) }
         else if mx >= x + 270 && my >= y + 292 && my < y + 326 { screenKind = "title" }
         else { return }
         playUI("ui.button.click")
@@ -1694,6 +1771,13 @@ final class WindowsGameHost: GameHost {
             } else if createWorldField == 1, createWorldSeed.count < 64 {
                 createWorldSeed.append(contentsOf: filtered.prefix(64 - createWorldSeed.count))
             }
+        } else if screenOpen, screenKind == "multiplayer" {
+            multiplayerMessage = ""
+            if multiplayerField == 0, multiplayerAddress.count < 128 {
+                multiplayerAddress.append(contentsOf: filtered.prefix(128 - multiplayerAddress.count))
+            } else if multiplayerField == 1, multiplayerName.count < 32 {
+                multiplayerName.append(contentsOf: filtered.prefix(32 - multiplayerName.count))
+            }
         } else if screenOpen, screenKind == "chat", textBuffer.count < 256 {
             textBuffer.append(contentsOf: filtered)
         } else if screenOpen, screenKind == "sign", var lines = screenData?.be?.lines,
@@ -1721,6 +1805,17 @@ final class WindowsGameHost: GameHost {
         } else if screenKind == "create_world", code == "Enter" {
             createWorldFromForm(game: game)
             return true
+        } else if screenKind == "multiplayer", code == "Tab" {
+            multiplayerField = multiplayerField == 0 ? 1 : 0
+            return false
+        } else if screenKind == "multiplayer", code == "Backspace" {
+            multiplayerMessage = ""
+            if multiplayerField == 0, !multiplayerAddress.isEmpty { multiplayerAddress.removeLast() }
+            else if multiplayerField == 1, !multiplayerName.isEmpty { multiplayerName.removeLast() }
+            return false
+        } else if screenKind == "multiplayer", code == "Enter" {
+            connectFromForm(game: game)
+            return !screenOpen
         } else if screenKind == "title", code == "Enter" {
             let worlds = game.listWorlds()
             if worlds.isEmpty {
@@ -1756,6 +1851,7 @@ final class WindowsGameHost: GameHost {
         guard screenOpen, screenKind != "death" else { return false }
         if screenKind == "title" { return true }
         if screenKind == "create_world" { screenKind = "title"; return true }
+        if screenKind == "multiplayer" { screenKind = "title"; return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true
