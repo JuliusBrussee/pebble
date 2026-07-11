@@ -74,6 +74,7 @@ final class WindowsGameHost: GameHost {
     private(set) var exitRequested = false
     private var screenReturnKind = "title"
     private weak var tradingMob: Mob?
+    private var externalContainerCommit: (() -> Void)?
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -1210,12 +1211,33 @@ final class WindowsGameHost: GameHost {
         screenKind = kind; screenData = data; screenOpen = true
     }
     func openTrading(_ villager: Mob) { tradingMob = villager; screenKind = "trading"; screenOpen = true }
-    func openVehicleChest(_ kind: String, _ vehicle: Entity) { screenOpen = true }
+    func openVehicleChest(_ kind: String, _ vehicle: Entity) {
+        let proxy = BlockEntityData(type: "vehicle_container", x: 0, y: 0, z: 0)
+        if let boat = vehicle as? Boat {
+            proxy.items = boat.chestItems
+            externalContainerCommit = { [weak boat, weak proxy] in
+                if let items = proxy?.items { boat?.chestItems = items }
+            }
+        } else if let minecart = vehicle as? Minecart {
+            proxy.items = minecart.chestItems
+            externalContainerCommit = { [weak minecart, weak proxy] in
+                if let items = proxy?.items { minecart?.chestItems = items }
+            }
+        } else { return }
+        var data = ScreenData()
+        data.be = proxy
+        data.title = kind.replacingOccurrences(of: "_", with: " ").uppercased()
+        screenKind = kind
+        screenData = data
+        screenOpen = true
+    }
     func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
     func openDeathScreen(_ message: String) { screenKind = "death"; screenMessage = message; screenOpen = true }
     func openPauseScreen() { screenKind = "pause"; screenOpen = true }
     func openTitleScreen() { screenKind = "title"; screenOpen = true }
     func closeAllScreens() {
+        externalContainerCommit?()
+        externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
     }
     func screenText(_ text: String) {
