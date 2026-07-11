@@ -70,6 +70,8 @@ final class WindowsGameHost: GameHost {
     private var carriedStack: ItemStack?
     private var lastScreenSize = SIMD2<Float>(1, 1)
     private var screenData: ScreenData?
+    private var screenMessage = ""
+    private(set) var exitRequested = false
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -529,6 +531,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(0.03, 0.04, 0.06, 0.92))
                 _ = uiCanvas.text("> " + textBuffer + "_", x: 24, y: height - 48, scale: 2,
                                   color: SIMD4<Float>(1, 1, 1, 1))
+            } else if screenKind == "pause" || screenKind == "death" {
+                appendActionScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -563,6 +567,33 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendActionScreen(game: GameCore, width: Float, height: Float) {
+        let centerX = width / 2
+        if screenKind == "death" {
+            uiCanvas.textCentered("YOU DIED", centerX: centerX, y: height / 2 - 92,
+                                  scale: 4, color: SIMD4<Float>(1, 0.25, 0.25, 1))
+            uiCanvas.textCentered(screenMessage, centerX: centerX, y: height / 2 - 52,
+                                  scale: 1.4, color: SIMD4<Float>(0.9, 0.9, 0.92, 1))
+            actionButton("RESPAWN", x: centerX - 130, y: height / 2, width: 260)
+            actionButton("SAVE AND QUIT", x: centerX - 130, y: height / 2 + 48, width: 260)
+        } else {
+            uiCanvas.textCentered("GAME PAUSED", centerX: centerX, y: height / 2 - 112, scale: 3)
+            actionButton("BACK TO GAME", x: centerX - 130, y: height / 2 - 54, width: 260)
+            let lanTitle = game.netHost != nil ? "LAN OPEN" : game.netGuest != nil ? "CONNECTED" : "OPEN TO LAN"
+            actionButton(lanTitle, x: centerX - 130, y: height / 2 - 6, width: 260)
+            actionButton("SAVE AND QUIT", x: centerX - 130, y: height / 2 + 42, width: 260)
+        }
+    }
+
+    private func actionButton(_ title: String, x: Float, y: Float, width: Float) {
+        let hovered = screenMousePosition.x >= x && screenMousePosition.x < x + width &&
+                      screenMousePosition.y >= y && screenMousePosition.y < y + 34
+        uiCanvas.fillRect(x: x, y: y, width: width, height: 34,
+                          color: hovered ? SIMD4<Float>(0.35, 0.42, 0.58, 0.96)
+                                         : SIMD4<Float>(0.16, 0.18, 0.23, 0.96))
+        uiCanvas.textCentered(title, centerX: x + width / 2, y: y + 10, scale: 1.5)
     }
 
     private func appendContainerScreen(game: GameCore, width: Float, height: Float) {
@@ -666,6 +697,10 @@ final class WindowsGameHost: GameHost {
     func screenMouse(x: Float, y: Float) { screenMousePosition = SIMD2<Float>(x, y) }
 
     func screenMouseButton(_ button: Int, game: GameCore) {
+        if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
+            handleActionScreenClick(game: game)
+            return
+        }
         if screenOpen, let slot = containerSlotAtMouse(), let player = game.player {
             switch slot {
             case .container(let index, let second):
@@ -704,6 +739,27 @@ final class WindowsGameHost: GameHost {
                 }
                 if carried.count <= 0 { carriedStack = nil }
             }
+        }
+        playUI("ui.button.click")
+    }
+
+    private func handleActionScreenClick(game: GameCore) {
+        let centerX = lastScreenSize.x / 2
+        let x = screenMousePosition.x
+        let y = screenMousePosition.y
+        guard x >= centerX - 130 && x < centerX + 130 else { return }
+        if screenKind == "death" {
+            if y >= lastScreenSize.y / 2 && y < lastScreenSize.y / 2 + 34 {
+                game.respawnPlayer(); closeAllScreens()
+            } else if y >= lastScreenSize.y / 2 + 48 && y < lastScreenSize.y / 2 + 82 {
+                game.saveAndFlush(synchronous: true); exitRequested = true
+            }
+        } else if y >= lastScreenSize.y / 2 - 54 && y < lastScreenSize.y / 2 - 20 {
+            closeAllScreens()
+        } else if y >= lastScreenSize.y / 2 - 6 && y < lastScreenSize.y / 2 + 28 {
+            if game.netHost == nil && game.netGuest == nil, game.startLanHost() { closeAllScreens() }
+        } else if y >= lastScreenSize.y / 2 + 42 && y < lastScreenSize.y / 2 + 76 {
+            game.saveAndFlush(synchronous: true); exitRequested = true
         }
         playUI("ui.button.click")
     }
@@ -901,7 +957,7 @@ final class WindowsGameHost: GameHost {
     func openTrading(_ villager: Mob) { screenOpen = true }
     func openVehicleChest(_ kind: String, _ vehicle: Entity) { screenOpen = true }
     func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
-    func openDeathScreen(_ message: String) { screenKind = "you died"; screenOpen = true }
+    func openDeathScreen(_ message: String) { screenKind = "death"; screenMessage = message; screenOpen = true }
     func openPauseScreen() { screenKind = "pause"; screenOpen = true }
     func openTitleScreen() { screenKind = "title"; screenOpen = true }
     func closeAllScreens() { screenOpen = false; textBuffer = ""; screenData = nil }
@@ -922,6 +978,11 @@ final class WindowsGameHost: GameHost {
             return true
         }
         return false
+    }
+    func escapeScreen() -> Bool {
+        guard screenOpen, screenKind != "death" else { return false }
+        closeAllScreens()
+        return true
     }
     func releasePointer() {}
     func showActionBar(_ text: String, _ time: Int) {

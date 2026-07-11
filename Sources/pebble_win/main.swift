@@ -130,9 +130,10 @@ do {
                     continue
                 }
                 if code == "Escape", pressed, host.hasScreen() {
-                    host.closeAllScreens()
-                    window.setTextInput(false)
-                    window.setRelativeMouse(true)
+                    if host.escapeScreen() {
+                        window.setTextInput(false)
+                        window.setRelativeMouse(true)
+                    }
                 } else if pressed, host.hasScreen() {
                     if host.screenKey(code, game: game) {
                         window.setTextInput(false)
@@ -192,6 +193,7 @@ do {
             window.setRelativeMouse(false)
             window.setTextInput(true)
         }
+        if host.exitRequested { running = false }
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
     }
     game.saveAndFlush(synchronous: true)
