@@ -75,6 +75,7 @@ final class WindowsGameHost: GameHost {
     private var screenReturnKind = "title"
     private weak var tradingMob: Mob?
     private var externalContainerCommit: (() -> Void)?
+    private var signLine = 0
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -604,6 +605,8 @@ final class WindowsGameHost: GameHost {
                 appendOptionsScreen(game: game, width: width, height: height)
             } else if screenKind == "trading" {
                 appendTradingScreen(game: game, width: width, height: height)
+            } else if screenKind == "sign" {
+                appendSignScreen(width: width, height: height)
             } else if screenKind == "pause" || screenKind == "death" {
                 appendActionScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
@@ -640,6 +643,28 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendSignScreen(width: Float, height: Float) {
+        let panelWidth: Float = 420, panelHeight: Float = 260
+        let x = (width - panelWidth) / 2, y = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: x, y: y, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.34, 0.22, 0.1, 0.98))
+        uiCanvas.textCentered("EDIT SIGN", centerX: width / 2, y: y + 20, scale: 2)
+        let lines = screenData?.be?.lines ?? ["", "", "", ""]
+        for index in 0..<4 {
+            let lineY = y + 72 + Float(index) * 34
+            if index == signLine {
+                uiCanvas.fillRect(x: x + 28, y: lineY - 6, width: panelWidth - 56, height: 26,
+                                  color: SIMD4<Float>(0.12, 0.08, 0.04, 0.45))
+            }
+            uiCanvas.textCentered((index < lines.count ? lines[index] : "") + (index == signLine ? "_" : ""),
+                                  centerX: width / 2, y: lineY, scale: 1.8,
+                                  color: SIMD4<Float>(0.08, 0.055, 0.025, 1))
+        }
+        uiCanvas.textCentered("ENTER: NEXT LINE   ESC: DONE", centerX: width / 2,
+                              y: y + panelHeight - 28, scale: 1.1,
+                              color: SIMD4<Float>(0.85, 0.75, 0.58, 1))
     }
 
     private func appendTradingScreen(game: GameCore, width: Float, height: Float) {
@@ -1209,6 +1234,10 @@ final class WindowsGameHost: GameHost {
     func screenPausesGame() -> Bool { screenOpen }
     func openScreen(_ kind: String, _ data: ScreenData?) {
         screenKind = kind; screenData = data; screenOpen = true
+        if kind == "sign" {
+            signLine = 0
+            if screenData?.be?.lines == nil { screenData?.be?.lines = ["", "", "", ""] }
+        }
     }
     func openTrading(_ villager: Mob) { tradingMob = villager; screenKind = "trading"; screenOpen = true }
     func openVehicleChest(_ kind: String, _ vehicle: Entity) {
@@ -1241,13 +1270,24 @@ final class WindowsGameHost: GameHost {
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
     }
     func screenText(_ text: String) {
-        guard screenOpen, screenKind == "chat", textBuffer.count < 256 else { return }
-        textBuffer.append(contentsOf: text.filter { $0 != "\n" && $0 != "\r" && $0 != "\t" })
+        let filtered = text.filter { $0 != "\n" && $0 != "\r" && $0 != "\t" }
+        if screenOpen, screenKind == "chat", textBuffer.count < 256 {
+            textBuffer.append(contentsOf: filtered)
+        } else if screenOpen, screenKind == "sign", var lines = screenData?.be?.lines,
+                  signLine < lines.count, lines[signLine].count < 30 {
+            lines[signLine].append(contentsOf: filtered.prefix(30 - lines[signLine].count))
+            screenData?.be?.lines = lines
+        }
     }
     func screenKey(_ code: String, game: GameCore) -> Bool {
         guard screenOpen else { return false }
         if code == "Backspace", screenKind == "chat", !textBuffer.isEmpty {
             textBuffer.removeLast()
+        } else if code == "Backspace", screenKind == "sign", var lines = screenData?.be?.lines,
+                  signLine < lines.count, !lines[signLine].isEmpty {
+            lines[signLine].removeLast(); screenData?.be?.lines = lines
+        } else if code == "Enter", screenKind == "sign" {
+            if signLine < 3 { signLine += 1 } else { closeAllScreens(); return true }
         } else if code == "Enter", screenKind == "chat" {
             let message = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
             if !message.isEmpty {
