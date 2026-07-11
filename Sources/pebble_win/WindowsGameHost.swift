@@ -489,13 +489,7 @@ final class WindowsGameHost: GameHost {
         } else if code == "Enter", screenKind == "chat" {
             let message = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
             if !message.isEmpty {
-                if message.hasPrefix("/") {
-                    pushChat("Commands are not wired in this shell yet: \(message)")
-                } else if let guest = game.netGuest {
-                    guest.sendChat(message)
-                } else {
-                    pushChat("<you> \(message)")
-                }
+                executeGameCommand(game, message, output: pushChat)
             }
             closeAllScreens()
             return true
