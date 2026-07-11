@@ -89,6 +89,10 @@ final class WindowsGameHost: GameHost {
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
+    private var createWorldName = ""
+    private var createWorldSeed = ""
+    private var createWorldField = 0
+    private var createWorldMode = 0
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -885,6 +889,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(1, 1, 1, 1))
             } else if screenKind == "title" {
                 appendTitleScreen(game: game, width: width, height: height)
+            } else if screenKind == "create_world" {
+                appendCreateWorldScreen(width: width, height: height)
             } else if screenKind == "options" {
                 appendOptionsScreen(game: game, width: width, height: height)
             } else if screenKind == "trading" {
@@ -1057,6 +1063,38 @@ final class WindowsGameHost: GameHost {
                               scale: 1.2, color: SIMD4<Float>(0.55, 0.62, 0.68, 1))
     }
 
+    private func appendCreateWorldScreen(width: Float, height: Float) {
+        uiCanvas.gradientRect(x: 0, y: 0, width: width, height: height,
+                              top: SIMD4<Float>(0.035, 0.07, 0.13, 1),
+                              bottom: SIMD4<Float>(0.12, 0.2, 0.18, 1))
+        let panelWidth: Float = 520, panelHeight: Float = 350
+        let x = (width - panelWidth) / 2, y = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: x, y: y, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.04, 0.055, 0.075, 0.96))
+        uiCanvas.textCentered("CREATE NEW WORLD", centerX: width / 2, y: y + 28, scale: 2.8)
+        _ = uiCanvas.text("WORLD NAME", x: x + 48, y: y + 90, scale: 1.3,
+                          color: SIMD4<Float>(0.7, 0.78, 0.84, 1))
+        textField(createWorldName + (createWorldField == 0 ? "_" : ""),
+                  x: x + 48, y: y + 112, width: panelWidth - 96, focused: createWorldField == 0)
+        _ = uiCanvas.text("SEED (BLANK FOR RANDOM)", x: x + 48, y: y + 166, scale: 1.3,
+                          color: SIMD4<Float>(0.7, 0.78, 0.84, 1))
+        textField(createWorldSeed + (createWorldField == 1 ? "_" : ""),
+                  x: x + 48, y: y + 188, width: panelWidth - 96, focused: createWorldField == 1)
+        actionButton(createWorldMode == 1 ? "MODE: CREATIVE" : "MODE: SURVIVAL",
+                     x: x + 48, y: y + 240, width: panelWidth - 96)
+        actionButton("CREATE WORLD", x: x + 48, y: y + 292, width: 202)
+        actionButton("CANCEL", x: x + 270, y: y + 292, width: 202)
+    }
+
+    private func textField(_ value: String, x: Float, y: Float, width: Float, focused: Bool) {
+        uiCanvas.fillRect(x: x, y: y, width: width, height: 36,
+                          color: focused ? SIMD4<Float>(0.28, 0.38, 0.48, 1)
+                                         : SIMD4<Float>(0.12, 0.15, 0.19, 1))
+        uiCanvas.fillRect(x: x + 2, y: y + 2, width: width - 4, height: 32,
+                          color: SIMD4<Float>(0.025, 0.03, 0.04, 1))
+        _ = uiCanvas.text(String(value.suffix(34)), x: x + 10, y: y + 11, scale: 1.4)
+    }
+
     private func appendActionScreen(game: GameCore, width: Float, height: Float) {
         let centerX = width / 2
         if screenKind == "death" {
@@ -1204,6 +1242,10 @@ final class WindowsGameHost: GameHost {
             handleTitleClick(game: game)
             return
         }
+        if button == 0, screenOpen, screenKind == "create_world" {
+            handleCreateWorldClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
             handleActionScreenClick(game: game)
             return
@@ -1313,9 +1355,12 @@ final class WindowsGameHost: GameHost {
         }
         let buttonY = listY + rowHeight * 5 + 12
         if x >= listX && x < listX + 274 && y >= buttonY && y < buttonY + 34 {
-            if !worlds.isEmpty { game.loadWorld(worlds[titleWorldSelection].id) }
-            else { game.createWorld(name: "World", seedText: "", mode: 0, difficulty: 2) }
-            closeAllScreens()
+            if !worlds.isEmpty {
+                game.loadWorld(worlds[titleWorldSelection].id)
+                closeAllScreens()
+            } else {
+                beginCreateWorld(game: game)
+            }
         } else if x >= listX + 286 && x < listX + 560 && y >= buttonY && y < buttonY + 34,
                   !worlds.isEmpty {
             let selected = worlds[titleWorldSelection]
@@ -1327,9 +1372,7 @@ final class WindowsGameHost: GameHost {
                 pendingWorldDeleteID = selected.id
             }
         } else if x >= listX && x < listX + 274 && y >= buttonY + 46 && y < buttonY + 80 {
-            let number = game.listWorlds().count + 1
-            game.createWorld(name: "World \(number)", seedText: "", mode: 0, difficulty: 2)
-            closeAllScreens()
+            beginCreateWorld(game: game)
         } else if x >= listX + 286 && x < listX + 560 && y >= buttonY + 46 && y < buttonY + 80 {
             screenReturnKind = "title"; screenKind = "options"
         } else if x >= lastScreenSize.x / 2 - 137 && x < lastScreenSize.x / 2 + 137 &&
@@ -1338,6 +1381,35 @@ final class WindowsGameHost: GameHost {
         } else {
             return
         }
+        playUI("ui.button.click")
+    }
+
+    private func beginCreateWorld(game: GameCore) {
+        createWorldName = "World \(game.listWorlds().count + 1)"
+        createWorldSeed = ""
+        createWorldField = 0
+        createWorldMode = 0
+        screenKind = "create_world"
+    }
+
+    private func createWorldFromForm(game: GameCore) {
+        let name = createWorldName.trimmingCharacters(in: .whitespacesAndNewlines)
+        game.createWorld(name: name.isEmpty ? "World \(game.listWorlds().count + 1)" : name,
+                         seedText: createWorldSeed, mode: createWorldMode, difficulty: 2)
+        closeAllScreens()
+    }
+
+    private func handleCreateWorldClick(game: GameCore) {
+        let panelWidth: Float = 520, panelHeight: Float = 350
+        let x = (lastScreenSize.x - panelWidth) / 2, y = (lastScreenSize.y - panelHeight) / 2
+        let mx = screenMousePosition.x, my = screenMousePosition.y
+        guard mx >= x + 48 && mx < x + panelWidth - 48 else { return }
+        if my >= y + 112 && my < y + 148 { createWorldField = 0 }
+        else if my >= y + 188 && my < y + 224 { createWorldField = 1 }
+        else if my >= y + 240 && my < y + 274 { createWorldMode = createWorldMode == 0 ? 1 : 0 }
+        else if mx < x + 250 && my >= y + 292 && my < y + 326 { createWorldFromForm(game: game) }
+        else if mx >= x + 270 && my >= y + 292 && my < y + 326 { screenKind = "title" }
+        else { return }
         playUI("ui.button.click")
     }
 
@@ -1616,7 +1688,13 @@ final class WindowsGameHost: GameHost {
     }
     func screenText(_ text: String) {
         let filtered = text.filter { $0 != "\n" && $0 != "\r" && $0 != "\t" }
-        if screenOpen, screenKind == "chat", textBuffer.count < 256 {
+        if screenOpen, screenKind == "create_world" {
+            if createWorldField == 0, createWorldName.count < 48 {
+                createWorldName.append(contentsOf: filtered.prefix(48 - createWorldName.count))
+            } else if createWorldField == 1, createWorldSeed.count < 64 {
+                createWorldSeed.append(contentsOf: filtered.prefix(64 - createWorldSeed.count))
+            }
+        } else if screenOpen, screenKind == "chat", textBuffer.count < 256 {
             textBuffer.append(contentsOf: filtered)
         } else if screenOpen, screenKind == "sign", var lines = screenData?.be?.lines,
                   signLine < lines.count, lines[signLine].count < 30 {
@@ -1633,10 +1711,23 @@ final class WindowsGameHost: GameHost {
                 pendingWorldDeleteID = nil
             }
             return false
+        } else if screenKind == "create_world", code == "Tab" {
+            createWorldField = createWorldField == 0 ? 1 : 0
+            return false
+        } else if screenKind == "create_world", code == "Backspace" {
+            if createWorldField == 0, !createWorldName.isEmpty { createWorldName.removeLast() }
+            else if createWorldField == 1, !createWorldSeed.isEmpty { createWorldSeed.removeLast() }
+            return false
+        } else if screenKind == "create_world", code == "Enter" {
+            createWorldFromForm(game: game)
+            return true
         } else if screenKind == "title", code == "Enter" {
             let worlds = game.listWorlds()
-            if worlds.isEmpty { game.createWorld(name: "World", seedText: "", mode: 0, difficulty: 2) }
-            else { game.loadWorld(worlds[titleWorldSelection].id) }
+            if worlds.isEmpty {
+                beginCreateWorld(game: game)
+                return false
+            }
+            game.loadWorld(worlds[titleWorldSelection].id)
             closeAllScreens()
             return true
         } else if code == "Backspace", screenKind == "chat", !textBuffer.isEmpty {
@@ -1664,6 +1755,7 @@ final class WindowsGameHost: GameHost {
     func escapeScreen() -> Bool {
         guard screenOpen, screenKind != "death" else { return false }
         if screenKind == "title" { return true }
+        if screenKind == "create_world" { screenKind = "title"; return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true
