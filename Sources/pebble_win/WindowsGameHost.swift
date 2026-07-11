@@ -54,6 +54,10 @@ final class WindowsGameHost: GameHost {
     private var particleMesh: MeshHandle?
     private var particleClock: Double?
     private var particleRandom: UInt32 = 0x70656262
+    private var actionBarText = ""
+    private var actionBarFrames = 0
+    private var chatLines: [String] = []
+    private var bossBars: [BossBarInfo] = []
 
     init(renderer: VulkanRendererBackend) throws {
         self.renderer = renderer
@@ -447,6 +451,7 @@ final class WindowsGameHost: GameHost {
             _ = uiCanvas.text("X \(Int(game.player.x)) Y \(Int(game.player.y)) Z \(Int(game.player.z))",
                               x: 12, y: 34, scale: 1.5,
                               color: SIMD4<Float>(0.8, 0.85, 0.9, 0.9))
+            appendSurvivalHUD(game: game, width: width, height: height)
         }
         let batch = uiCanvas.finish()
         guard !batch.vertices.isEmpty else { return }
@@ -458,6 +463,77 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendSurvivalHUD(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let slot: Float = 40
+        let barWidth = slot * 9
+        let left = (width - barWidth) / 2
+        let top = height - 58
+        for index in 0..<9 {
+            let x = left + Float(index) * slot
+            let selected = index == player.selectedSlot
+            uiCanvas.fillRect(x: x, y: top, width: slot - 2, height: 38,
+                              color: selected ? SIMD4<Float>(0.9, 0.9, 0.94, 0.9)
+                                              : SIMD4<Float>(0.05, 0.05, 0.07, 0.78))
+            uiCanvas.fillRect(x: x + 2, y: top + 2, width: slot - 6, height: 34,
+                              color: SIMD4<Float>(0.13, 0.14, 0.17, 0.92))
+            if let stack = player.inventory[index] {
+                let name = itemName(stack.id).split(separator: "_").first.map(String.init) ?? "?"
+                _ = uiCanvas.text(String(name.prefix(3)), x: x + 5, y: top + 8, scale: 1.25,
+                                  color: stack.ench.isEmpty ? SIMD4<Float>(0.88, 0.9, 0.94, 1)
+                                                           : SIMD4<Float>(0.72, 0.5, 1, 1))
+                if stack.count > 1 {
+                    _ = uiCanvas.text("\(stack.count)", x: x + 21, y: top + 24, scale: 1,
+                                      color: SIMD4<Float>(1, 1, 1, 1))
+                }
+            }
+        }
+        let healthWidth: Float = 160
+        let healthRatio = Float(max(0, min(1, player.health / max(1, player.maxHealth))))
+        let hungerRatio = Float(max(0, min(1, Double(player.hunger) / 20)))
+        meter(x: left, y: top - 20, width: healthWidth, ratio: healthRatio,
+              fill: SIMD4<Float>(0.86, 0.12, 0.16, 1), label: "HP \(Int(player.health.rounded(.up)))")
+        meter(x: left + barWidth - healthWidth, y: top - 20, width: healthWidth, ratio: hungerRatio,
+              fill: SIMD4<Float>(0.9, 0.55, 0.12, 1), label: "FOOD \(player.hunger)")
+        if player.armorValue() > 0 {
+            _ = uiCanvas.text("ARMOR \(Int(player.armorValue()))", x: left, y: top - 38, scale: 1.1,
+                              color: SIMD4<Float>(0.65, 0.78, 0.92, 1))
+        }
+        if player.xpLevel > 0 || player.xpProgress > 0 {
+            meter(x: left, y: top + 42, width: barWidth - 2, ratio: Float(player.xpProgress),
+                  fill: SIMD4<Float>(0.3, 0.9, 0.22, 1), label: "LEVEL \(player.xpLevel)")
+        }
+        for (index, boss) in bossBars.prefix(3).enumerated() {
+            let bossWidth = min(420, width * 0.55)
+            let x = (width - bossWidth) / 2
+            let y = 18 + Float(index) * 30
+            uiCanvas.textCentered(boss.name, centerX: width / 2, y: y, scale: 1.4)
+            meter(x: x, y: y + 13, width: bossWidth, ratio: Float(max(0, min(1, boss.progress))),
+                  fill: SIMD4<Float>(0.63, 0.2, 0.72, 1), label: "")
+        }
+        if actionBarFrames > 0 {
+            uiCanvas.textCentered(actionBarText, centerX: width / 2, y: top - 54, scale: 1.6,
+                                  color: SIMD4<Float>(1, 0.95, 0.65, 1))
+            actionBarFrames -= 1
+        }
+        for (index, line) in chatLines.suffix(6).enumerated() {
+            _ = uiCanvas.text(line, x: 12, y: height - 145 - Float(index) * 14, scale: 1.1,
+                              color: SIMD4<Float>(0.95, 0.95, 0.98, 0.95))
+        }
+    }
+
+    private func meter(x: Float, y: Float, width: Float, ratio: Float,
+                       fill: SIMD4<Float>, label: String) {
+        uiCanvas.fillRect(x: x, y: y, width: width, height: 10,
+                          color: SIMD4<Float>(0.03, 0.03, 0.04, 0.88))
+        uiCanvas.fillRect(x: x + 1, y: y + 1, width: max(0, width - 2) * max(0, min(1, ratio)), height: 8,
+                          color: fill)
+        if !label.isEmpty {
+            _ = uiCanvas.text(label, x: x, y: y - 10, scale: 1,
+                              color: SIMD4<Float>(0.94, 0.94, 0.96, 1))
+        }
     }
 
     private func emptyFrame(target: RenderTarget, timeSec: Double) -> FramePacket {
@@ -497,10 +573,17 @@ final class WindowsGameHost: GameHost {
         return false
     }
     func releasePointer() {}
-    func showActionBar(_ text: String, _ time: Int) { print(text) }
-    func pushChat(_ line: String) { print(line) }
+    func showActionBar(_ text: String, _ time: Int) {
+        actionBarText = text
+        actionBarFrames = max(1, time * 3)
+    }
+    func pushChat(_ line: String) {
+        chatLines.append(line.replacingOccurrences(of: "§c", with: "").replacingOccurrences(of: "§7", with: ""))
+        if chatLines.count > 100 { chatLines.removeFirst(chatLines.count - 100) }
+        print(line)
+    }
     func pushToast(_ adv: AdvancementDef) {}
-    func setBossBars(_ bars: [BossBarInfo]) {}
+    func setBossBars(_ bars: [BossBarInfo]) { bossBars = bars }
 
     func playSound(_ name: String, _ x: Double, _ y: Double, _ z: Double, _ volume: Double, _ pitch: Double) {
         let seed = hashString(name)
