@@ -3,6 +3,7 @@ import PebbleAudioCore
 import PebbleCore
 import PebbleRenderABI
 import PebbleRendererVulkan
+import PebbleResources
 import PebbleUI
 
 private struct WinSectionKey: Hashable {
@@ -58,9 +59,14 @@ final class WindowsGameHost: GameHost {
     private var actionBarFrames = 0
     private var chatLines: [String] = []
     private var bossBars: [BossBarInfo] = []
+    private let resourcePacks: ResourcePackStack
+    private let customSkinURL: URL
 
-    init(renderer: VulkanRendererBackend) throws {
+    init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
+         customSkinURL: URL) throws {
         self.renderer = renderer
+        self.resourcePacks = resourcePacks
+        self.customSkinURL = customSkinURL
         let built = PebbleCore.buildAtlas()
         atlas = try renderer.createTexture(RenderTextureData(
             width: TILE, height: TILE, layers: built.count,
@@ -277,9 +283,20 @@ final class WindowsGameHost: GameHost {
         guard let mesh = try? renderer.createMesh(RenderMeshData(
             vertexLayout: .entity, vertexBytes: geometry.verts.withUnsafeBytes { Array($0) },
             indexBytes: [], indexFormat: .uint32)) else { return nil }
+        let packedImage = name == "player"
+            ? resourcePacks.playerSkin(customURL: customSkinURL)
+            : resourcePacks.entityImage(geometry.model.packTex,
+                                        stack: geometry.model.packTexStack,
+                                        tints: geometry.model.packTexTints)
+        let validPackedImage = packedImage.flatMap { image in
+            image.width * geometry.model.texH == image.height * geometry.model.texW ? image : nil
+        }
+        let skinWidth = validPackedImage?.width ?? geometry.skin.w
+        let skinHeight = validPackedImage?.height ?? geometry.skin.h
+        let skinPixels = validPackedImage?.pixels ?? geometry.skin.data
         guard let texture = try? renderer.createTexture(RenderTextureData(
-            width: geometry.skin.w, height: geometry.skin.h,
-            format: .rgba8Unorm, bytes: geometry.skin.data)) else {
+            width: skinWidth, height: skinHeight,
+            format: .rgba8Unorm, bytes: skinPixels)) else {
             renderer.destroyMesh(mesh)
             return nil
         }

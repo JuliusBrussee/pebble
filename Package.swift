@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "CPebblePlatform", targets: ["CPebblePlatform"]),
         .library(name: "PebbleRenderABI", targets: ["PebbleRenderABI"]),
         .library(name: "PebbleCodecs", targets: ["PebbleCodecs"]),
+        .library(name: "PebbleResources", targets: ["PebbleResources"]),
         .library(name: "PebbleAudioCore", targets: ["PebbleAudioCore"]),
         .library(name: "PebblePlatformNative", targets: ["PebblePlatformNative"]),
         .library(name: "PebbleStoreSQLite", targets: ["PebbleStoreSQLite"]),
@@ -62,6 +63,12 @@ let package = Package(
             name: "PebbleCodecs",
             dependencies: ["PebbleCoreBase"],
             path: "Sources/PebbleCodecs",
+            swiftSettings: swift5
+        ),
+        .target(
+            name: "PebbleResources",
+            dependencies: ["PebbleCodecs"],
+            path: "Sources/PebbleResources",
             swiftSettings: swift5
         ),
         // portable audio mixer and shared native-output facade.
@@ -214,7 +221,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "pebble_win",
-            dependencies: ["PebbleCore", "PebbleAudioCore", "PebbleRenderABI", "PebbleRendererVulkan", "PebblePlatformSDL", "PebbleNetNative", "PebbleUI"],
+            dependencies: ["PebbleCore", "PebbleAudioCore", "PebbleRenderABI", "PebbleRendererVulkan", "PebblePlatformSDL", "PebbleNetNative", "PebbleUI", "PebbleResources"],
             path: "Sources/pebble_win",
             swiftSettings: swift5
         ),

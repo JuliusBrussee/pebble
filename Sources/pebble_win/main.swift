@@ -4,13 +4,15 @@ import PebbleNetNative
 import PebblePlatformSDL
 import PebbleRenderABI
 import PebbleRendererVulkan
+import PebbleResources
 
 if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-h") {
     print("""
     pebble-win — Pebble SDL3 + Vulkan client
 
       pebble-win [--data-dir <path>] [--world <name-or-id>] [--seed <seed>]
-                 [--shader-dir <path>] [--validation] [--fullscreen]
+                 [--shader-dir <path>] [--resource-pack <zip>]
+                 [--validation] [--fullscreen]
     """)
     exit(0)
 }
@@ -63,7 +65,19 @@ do {
                                             shaderDirectory: shaderDirectory, initialTarget: initialTarget)
     NativeNetTransportFactory.installAsDefault()
     let game = GameCore(services: EngineServices(paths: paths, worldStore: try DirectoryWorldStore(paths: paths)))
-    let host = try WindowsGameHost(renderer: backend)
+    let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+    let resourcePackURLs: [URL] = {
+        if let explicit = option("--resource-pack") { return [URL(fileURLWithPath: explicit)] }
+        let candidates = [
+            executableDirectory.appendingPathComponent("assets/Faithful 32x - 1.20.1.zip"),
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("packaging/Faithful 32x - 1.20.1.zip"),
+        ]
+        return candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
+    }()
+    let host = try WindowsGameHost(renderer: backend,
+                                   resourcePacks: ResourcePackStack(urls: resourcePackURLs),
+                                   customSkinURL: paths.skinPNG)
     game.host = host
     if let requestedWorld = option("--world"), let record = game.listWorlds().first(where: { $0.id == requestedWorld || $0.name == requestedWorld }) {
         game.loadWorld(record.id)
