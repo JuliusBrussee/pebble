@@ -155,7 +155,7 @@ final class WindowsGameHost: GameHost {
             gamma: Float(game.settings.gamma + cam.nightVision * 1.6), ambient: ambient,
             fogStart: renderDistance * 0.55, fogEnd: renderDistance * 0.95,
             fogColor: fogColor, sunDir: SIMD4<Float>(sunDirection, 0),
-            shadowsOn: shadowsOn, ultraOn: false)
+            shadowsOn: shadowsOn, ultraOn: game.settings.shader == "ultra")
         var builder = FrameBuilder(camera: camera, uniforms: uniforms)
         let shared = ChunkSharedUniforms(
             viewProj: camera.viewProj, shadowMat: camera.shadowMat,
@@ -163,7 +163,8 @@ final class WindowsGameHost: GameHost {
             fog: SIMD4<Float>(uniforms.fogStart, uniforms.fogEnd, 0, 1),
             fogColor: fogColor,
             misc: SIMD4<Float>(Float(timeSec), game.settings.clouds ? 1 : 0,
-                               Float(world.dim.rawValue), world.raining ? 1 : 0))
+                               Float(world.dim.rawValue),
+                               (world.raining ? 1 : 0) + (uniforms.ultraOn ? 2 : 0)))
         let maximumDistanceSquared = (renderDistance + 24) * (renderDistance + 24)
         for (key, section) in sections {
             let origin = SIMD3<Float>(Float(Double(key.cx * 16) - cam.x),
@@ -704,6 +705,7 @@ final class WindowsGameHost: GameHost {
             "RENDER DISTANCE  \(game.settings.renderDistance)",
             "SHADOWS  \(game.settings.shadows ? "ON" : "OFF")",
             "CLOUDS  \(game.settings.clouds ? "ON" : "OFF")",
+            "ULTRA GRAPHICS  \(game.settings.shader == "ultra" ? "ON" : "OFF")",
             "BRIGHTNESS  \(Int(game.settings.gamma * 100))%",
             "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
             "MASTER VOLUME  \(Int((game.settings.volumes["master"] ?? 0.8) * 100))%",
@@ -1004,15 +1006,16 @@ final class WindowsGameHost: GameHost {
         case 0: game.settings.renderDistance = game.settings.renderDistance >= 24 ? 4 : game.settings.renderDistance + 2
         case 1: game.settings.shadows.toggle()
         case 2: game.settings.clouds.toggle()
-        case 3: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
-        case 4: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
-        case 5:
+        case 3: game.settings.shader = game.settings.shader == "ultra" ? nil : "ultra"
+        case 4: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
+        case 5: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
+        case 6:
             let value = game.settings.volumes["master"] ?? 0.8
             game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 6:
+        case 7:
             let value = game.settings.volumes["music"] ?? 0.5
             game.settings.volumes["music"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 7:
+        case 8:
             game.applySettings(); screenKind = screenReturnKind
         default: return
         }

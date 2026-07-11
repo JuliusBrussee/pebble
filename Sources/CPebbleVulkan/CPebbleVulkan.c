@@ -1673,6 +1673,8 @@ PBVulkanStatus pb_vulkan_chunk_renderer_install_postprocess(PBVulkanChunkRendere
                                                    &renderer->composite_descriptor_layout);
     VkPipelineLayoutCreateInfo layout = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     layout.setLayoutCount = 1; layout.pSetLayouts = &renderer->composite_descriptor_layout;
+    VkPushConstantRange push = {VK_SHADER_STAGE_FRAGMENT_BIT, 0, 16};
+    layout.pushConstantRangeCount = 1; layout.pPushConstantRanges = &push;
     if (result == VK_SUCCESS) result = vkCreatePipelineLayout(context->device, &layout, NULL,
                                                                &renderer->composite_pipeline_layout);
     VkDescriptorPoolSize pool_size = {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
@@ -1998,6 +2000,14 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->composite_pipeline);
     vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->composite_pipeline_layout,
                             0, 1, &renderer->composite_descriptor_set, 0, NULL);
+    float composite_constants[4] = {1, 0, 0, 0};
+    memcpy(&composite_constants[0], shared_uniforms + 132, 4);
+    memcpy(&composite_constants[2], shared_uniforms + 176, 4);
+    float packed_environment = 0;
+    memcpy(&packed_environment, shared_uniforms + 188, 4);
+    composite_constants[1] = packed_environment >= 2 ? 1 : 0;
+    vkCmdPushConstants(command, renderer->composite_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(composite_constants), composite_constants);
     vkCmdDraw(command, 3, 1, 0, 0);
     vkCmdEndRenderPass(command);
     result = vkEndCommandBuffer(command);
