@@ -69,6 +69,7 @@ final class WindowsGameHost: GameHost {
     private var screenMousePosition = SIMD2<Float>(0, 0)
     private var carriedStack: ItemStack?
     private var lastScreenSize = SIMD2<Float>(1, 1)
+    private var screenData: ScreenData?
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -530,6 +531,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(1, 1, 1, 1))
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
+            } else if screenData?.be?.items != nil {
+                appendContainerScreen(game: game, width: width, height: height)
             } else {
                 uiCanvas.textCentered(screenKind == "pause" ? "GAME PAUSED" : screenKind.uppercased(),
                                       centerX: width / 2, y: height / 2 - 36,
@@ -560,6 +563,54 @@ final class WindowsGameHost: GameHost {
         guard let uiMesh else { return }
         builder.addDraw(pass: .ui, pipeline: .ui, mesh: uiMesh,
                         vertexRange: 0..<UInt32(batch.vertices.count))
+    }
+
+    private func appendContainerScreen(game: GameCore, width: Float, height: Float) {
+        guard let blockEntity = screenData?.be, let items = blockEntity.items else { return }
+        let secondItems = screenData?.other?.items ?? []
+        let containerCount = items.count + secondItems.count
+        let rows = max(1, (containerCount + 8) / 9)
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28
+        let panelHeight = Float(rows + 4) * slot + 74
+        let panelX = (width - panelWidth) / 2
+        let panelY = max(12, (height - panelHeight) / 2)
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.1, 0.11, 0.14, 0.98))
+        _ = uiCanvas.text(screenData?.title ?? screenKind.uppercased(),
+                          x: panelX + 14, y: panelY + 12, scale: 1.7)
+        let gridX = panelX + 14
+        let containerY = panelY + 42
+        for index in 0..<containerCount {
+            let stack = index < items.count ? items[index] : secondItems[index - items.count]
+            inventorySlot(stack, x: gridX + Float(index % 9) * slot,
+                          y: containerY + Float(index / 9) * slot, selected: false)
+        }
+        let playerY = containerY + Float(rows) * slot + 18
+        if let player = game.player {
+            for row in 0..<3 {
+                for column in 0..<9 {
+                    let index = 9 + row * 9 + column
+                    inventorySlot(player.inventory[index], x: gridX + Float(column) * slot,
+                                  y: playerY + Float(row) * slot, selected: false)
+                }
+            }
+            for column in 0..<9 {
+                inventorySlot(player.inventory[column], x: gridX + Float(column) * slot,
+                              y: playerY + 3 * slot + 10,
+                              selected: column == player.selectedSlot)
+            }
+        }
+        if blockEntity.type == "furnace" {
+            let progress = Float(blockEntity.cookTime ?? 0) / Float(max(1, blockEntity.cookTotal ?? 200))
+            meter(x: panelX + 14, y: panelY + panelHeight - 12, width: panelWidth - 28,
+                  ratio: progress, fill: SIMD4<Float>(1, 0.55, 0.15, 1), label: "")
+        } else if blockEntity.type == "brewing" {
+            let progress = 1 - Float(blockEntity.brewTime ?? 0) / 400
+            meter(x: panelX + 14, y: panelY + panelHeight - 12, width: panelWidth - 28,
+                  ratio: progress, fill: SIMD4<Float>(0.65, 0.25, 0.9, 1), label: "")
+        }
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
     private func appendInventoryScreen(game: GameCore, width: Float, height: Float) {
@@ -615,6 +666,19 @@ final class WindowsGameHost: GameHost {
     func screenMouse(x: Float, y: Float) { screenMousePosition = SIMD2<Float>(x, y) }
 
     func screenMouseButton(_ button: Int, game: GameCore) {
+        if screenOpen, let slot = containerSlotAtMouse(), let player = game.player {
+            switch slot {
+            case .container(let index, let second):
+                let owner = second ? screenData?.other : screenData?.be
+                transferSlot(button: button, get: { owner?.items?[index] },
+                             set: { owner?.items?[index] = $0 })
+            case .player(let index):
+                transferSlot(button: button, get: { player.inventory[index] },
+                             set: { player.inventory[index] = $0 })
+            }
+            playUI("ui.button.click")
+            return
+        }
         guard screenOpen, (screenKind == "inventory" || screenKind == "creative"),
               let player = game.player, let slotIndex = inventorySlotAtMouse() else { return }
         if button == 0 {
@@ -642,6 +706,72 @@ final class WindowsGameHost: GameHost {
             }
         }
         playUI("ui.button.click")
+    }
+
+    private enum ContainerSlotHit { case container(Int, Bool), player(Int) }
+
+    private func containerSlotAtMouse() -> ContainerSlotHit? {
+        guard let first = screenData?.be?.items else { return nil }
+        let secondCount = screenData?.other?.items?.count ?? 0
+        let total = first.count + secondCount
+        let rows = max(1, (total + 8) / 9)
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28
+        let panelHeight = Float(rows + 4) * slot + 74
+        let panelX = (lastScreenSize.x - panelWidth) / 2
+        let panelY = max(12, (lastScreenSize.y - panelHeight) / 2)
+        let gridX = panelX + 14
+        let localX = screenMousePosition.x - gridX
+        guard localX >= 0 else { return nil }
+        let column = Int(localX / slot)
+        guard column >= 0 && column < 9,
+              localX.truncatingRemainder(dividingBy: slot) < 38 else { return nil }
+        let containerY = panelY + 42
+        let localContainerY = screenMousePosition.y - containerY
+        if localContainerY >= 0 {
+            let row = Int(localContainerY / slot)
+            if row >= 0 && row < rows && localContainerY.truncatingRemainder(dividingBy: slot) < 38 {
+                let index = row * 9 + column
+                if index < total {
+                    return index < first.count ? .container(index, false)
+                        : .container(index - first.count, true)
+                }
+            }
+        }
+        let playerY = containerY + Float(rows) * slot + 18
+        let localPlayerY = screenMousePosition.y - playerY
+        if localPlayerY >= 0 {
+            let row = Int(localPlayerY / slot)
+            if row >= 0 && row < 3 && localPlayerY.truncatingRemainder(dividingBy: slot) < 38 {
+                return .player(9 + row * 9 + column)
+            }
+        }
+        let hotbarY = playerY + 3 * slot + 10
+        if screenMousePosition.y >= hotbarY && screenMousePosition.y < hotbarY + 38 { return .player(column) }
+        return nil
+    }
+
+    private func transferSlot(button: Int, get: () -> ItemStack?, set: (ItemStack?) -> Void) {
+        if button == 0 {
+            let old = get()
+            set(carriedStack)
+            carriedStack = old
+        } else if button == 2 {
+            if carriedStack == nil, let stack = get() {
+                let take = (stack.count + 1) / 2
+                carriedStack = stack.copy(); carriedStack?.count = take
+                stack.count -= take
+                if stack.count <= 0 { set(nil) }
+            } else if let carried = carriedStack {
+                if let destination = get(), destination.id == carried.id,
+                   destination.count < itemDef(destination.id).maxStack {
+                    destination.count += 1; carried.count -= 1
+                } else if get() == nil {
+                    let one = carried.copy(); one.count = 1; set(one); carried.count -= 1
+                }
+                if carried.count <= 0 { carriedStack = nil }
+            }
+        }
     }
 
     private func inventorySlotAtMouse() -> Int? {
@@ -765,14 +895,16 @@ final class WindowsGameHost: GameHost {
 
     func hasScreen() -> Bool { screenOpen }
     func screenPausesGame() -> Bool { screenOpen }
-    func openScreen(_ kind: String, _ data: ScreenData?) { screenKind = kind; screenOpen = true }
+    func openScreen(_ kind: String, _ data: ScreenData?) {
+        screenKind = kind; screenData = data; screenOpen = true
+    }
     func openTrading(_ villager: Mob) { screenOpen = true }
     func openVehicleChest(_ kind: String, _ vehicle: Entity) { screenOpen = true }
     func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
     func openDeathScreen(_ message: String) { screenKind = "you died"; screenOpen = true }
     func openPauseScreen() { screenKind = "pause"; screenOpen = true }
     func openTitleScreen() { screenKind = "title"; screenOpen = true }
-    func closeAllScreens() { screenOpen = false; textBuffer = "" }
+    func closeAllScreens() { screenOpen = false; textBuffer = ""; screenData = nil }
     func screenText(_ text: String) {
         guard screenOpen, screenKind == "chat", textBuffer.count < 256 else { return }
         textBuffer.append(contentsOf: text.filter { $0 != "\n" && $0 != "\r" && $0 != "\t" })
