@@ -45,6 +45,8 @@ final class WindowsGameHost: GameHost {
     private var audioOutput: NativeMixerOutput?
     private var sections: [WinSectionKey: WinSectionMeshes] = [:]
     private var screenOpen = false
+    private var screenKind = "pause"
+    private var textBuffer = ""
     private let uiCanvas = UICanvasCPU(width: 1, height: 1)
     private var uiMesh: MeshHandle?
     private var entityResources: [String: WinEntityResources] = [:]
@@ -422,10 +424,18 @@ final class WindowsGameHost: GameHost {
         if screenOpen {
             uiCanvas.fillRect(x: 0, y: 0, width: width, height: height,
                               color: SIMD4<Float>(0, 0, 0, 0.58))
-            uiCanvas.textCentered("GAME PAUSED", centerX: width / 2, y: height / 2 - 36,
-                                  scale: 4, color: SIMD4<Float>(1, 1, 1, 1))
-            uiCanvas.textCentered("PRESS ESCAPE TO RESUME", centerX: width / 2, y: height / 2 + 20,
-                                  scale: 2, color: SIMD4<Float>(0.75, 0.78, 0.82, 1))
+            if screenKind == "chat" {
+                uiCanvas.fillRect(x: 14, y: height - 58, width: width - 28, height: 40,
+                                  color: SIMD4<Float>(0.03, 0.04, 0.06, 0.92))
+                _ = uiCanvas.text("> " + textBuffer + "_", x: 24, y: height - 48, scale: 2,
+                                  color: SIMD4<Float>(1, 1, 1, 1))
+            } else {
+                uiCanvas.textCentered(screenKind == "pause" ? "GAME PAUSED" : screenKind.uppercased(),
+                                      centerX: width / 2, y: height / 2 - 36,
+                                      scale: 4, color: SIMD4<Float>(1, 1, 1, 1))
+                uiCanvas.textCentered("PRESS ESCAPE TO RESUME", centerX: width / 2, y: height / 2 + 20,
+                                      scale: 2, color: SIMD4<Float>(0.75, 0.78, 0.82, 1))
+            }
         } else if game.hasWorld() {
             uiCanvas.fillRect(x: width / 2 - 1, y: height / 2 - 7, width: 2, height: 14,
                               color: SIMD4<Float>(1, 1, 1, 0.9))
@@ -460,14 +470,38 @@ final class WindowsGameHost: GameHost {
 
     func hasScreen() -> Bool { screenOpen }
     func screenPausesGame() -> Bool { screenOpen }
-    func openScreen(_ kind: String, _ data: ScreenData?) { screenOpen = true }
+    func openScreen(_ kind: String, _ data: ScreenData?) { screenKind = kind; screenOpen = true }
     func openTrading(_ villager: Mob) { screenOpen = true }
     func openVehicleChest(_ kind: String, _ vehicle: Entity) { screenOpen = true }
-    func openChat(_ prefix: String) { screenOpen = true }
-    func openDeathScreen(_ message: String) { screenOpen = true }
-    func openPauseScreen() { screenOpen = true }
-    func openTitleScreen() { screenOpen = true }
-    func closeAllScreens() { screenOpen = false }
+    func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
+    func openDeathScreen(_ message: String) { screenKind = "you died"; screenOpen = true }
+    func openPauseScreen() { screenKind = "pause"; screenOpen = true }
+    func openTitleScreen() { screenKind = "title"; screenOpen = true }
+    func closeAllScreens() { screenOpen = false; textBuffer = "" }
+    func screenText(_ text: String) {
+        guard screenOpen, screenKind == "chat", textBuffer.count < 256 else { return }
+        textBuffer.append(contentsOf: text.filter { $0 != "\n" && $0 != "\r" && $0 != "\t" })
+    }
+    func screenKey(_ code: String, game: GameCore) -> Bool {
+        guard screenOpen else { return false }
+        if code == "Backspace", screenKind == "chat", !textBuffer.isEmpty {
+            textBuffer.removeLast()
+        } else if code == "Enter", screenKind == "chat" {
+            let message = textBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !message.isEmpty {
+                if message.hasPrefix("/") {
+                    pushChat("Commands are not wired in this shell yet: \(message)")
+                } else if let guest = game.netGuest {
+                    guest.sendChat(message)
+                } else {
+                    pushChat("<you> \(message)")
+                }
+            }
+            closeAllScreens()
+            return true
+        }
+        return false
+    }
     func releasePointer() {}
     func showActionBar(_ text: String, _ time: Int) { print(text) }
     func pushChat(_ line: String) { print(line) }

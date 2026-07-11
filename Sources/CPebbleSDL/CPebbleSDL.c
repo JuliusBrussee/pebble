@@ -4,7 +4,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_vulkan.h>
 
-struct PBWindow { SDL_Window *window; };
+struct PBWindow { SDL_Window *window; uint32_t fullscreen; };
 
 static int pb_sdl_users = 0;
 
@@ -58,6 +58,8 @@ int32_t pb_window_poll_event(PBWindow *window, PBWindowEvent *out_event) {
         case SDL_EVENT_TEXT_INPUT:
             out_event->type = PB_WINDOW_EVENT_TEXT;
             strncpy(out_event->text, event.text.text, sizeof(out_event->text) - 1); break;
+        case SDL_EVENT_WINDOW_FOCUS_GAINED: out_event->type = PB_WINDOW_EVENT_FOCUS_GAINED; break;
+        case SDL_EVENT_WINDOW_FOCUS_LOST: out_event->type = PB_WINDOW_EVENT_FOCUS_LOST; break;
         default: out_event->type = PB_WINDOW_EVENT_NONE; break;
     }
     return 1;
@@ -71,6 +73,33 @@ void pb_window_size_pixels(PBWindow *window, int32_t *out_width, int32_t *out_he
 void pb_window_set_relative_mouse(PBWindow *window, uint32_t enabled) {
     if (window != NULL) SDL_SetWindowRelativeMouseMode(window->window, enabled != 0);
 }
+
+int32_t pb_window_set_fullscreen(PBWindow *window, uint32_t enabled) {
+    if (window == NULL) return -1;
+    if (!SDL_SetWindowFullscreen(window->window, enabled != 0)) return -2;
+    window->fullscreen = enabled != 0;
+    return 0;
+}
+
+uint32_t pb_window_is_fullscreen(PBWindow *window) {
+    return window == NULL ? 0 : window->fullscreen;
+}
+
+void pb_window_set_text_input(PBWindow *window, uint32_t enabled) {
+    if (window == NULL) return;
+    if (enabled) SDL_StartTextInput(window->window); else SDL_StopTextInput(window->window);
+}
+
+void pb_window_set_title(PBWindow *window, const char *title) {
+    if (window != NULL && title != NULL) SDL_SetWindowTitle(window->window, title);
+}
+
+int32_t pb_window_set_clipboard_text(const char *text) {
+    return text != NULL && SDL_SetClipboardText(text) ? 0 : -1;
+}
+
+char *pb_window_get_clipboard_text(void) { return SDL_GetClipboardText(); }
+void pb_window_free(void *pointer) { SDL_free(pointer); }
 
 const char * const *pb_window_vulkan_extensions(uint32_t *out_count) {
     if (out_count == NULL) return NULL;

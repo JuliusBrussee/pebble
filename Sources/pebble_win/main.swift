@@ -9,7 +9,8 @@ if CommandLine.arguments.contains("--help") || CommandLine.arguments.contains("-
     print("""
     pebble-win — Pebble SDL3 + Vulkan client
 
-      pebble-win [--data-dir <path>] [--no-validation]
+      pebble-win [--data-dir <path>] [--world <name-or-id>] [--seed <seed>]
+                 [--shader-dir <path>] [--validation] [--fullscreen]
     """)
     exit(0)
 }
@@ -72,10 +73,12 @@ do {
         game.createWorld(name: "World", seedText: option("--seed") ?? "", mode: 0, difficulty: 2)
     }
     window.setRelativeMouse(true)
+    if CommandLine.arguments.contains("--fullscreen") { try window.setFullscreen(true) }
 
     let info = vulkan.info
     print("PEBBLE_WINDOW_READY device=\(info.name) api=\(info.apiVersionString) size=\(window.pixelSize.width)x\(window.pixelSize.height)")
     var running = true
+    var controlHeld = false
     var lastFrame = DispatchTime.now().uptimeNanoseconds
     let startTime = lastFrame
     while running {
@@ -84,11 +87,23 @@ do {
             case .quit: running = false
             case .key(let scancode, let pressed, let repeatEvent):
                 guard let code = scancodeMap[scancode] else { continue }
+                if code == "ControlLeft" { controlHeld = pressed }
+                if code == "F11", pressed, !repeatEvent {
+                    try window.toggleFullscreen()
+                    continue
+                }
                 if code == "Escape", pressed, host.hasScreen() {
                     host.closeAllScreens()
+                    window.setTextInput(false)
                     window.setRelativeMouse(true)
+                } else if pressed, host.hasScreen() {
+                    if host.screenKey(code, game: game) {
+                        window.setTextInput(false)
+                        window.setRelativeMouse(true)
+                    }
                 } else if pressed && !repeatEvent {
-                    game.keyDown(code, now: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000)
+                    game.keyDown(code, now: Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000,
+                                 ctrlOrCmd: controlHeld)
                 } else if !pressed {
                     game.keyUp(code)
                 }
@@ -100,6 +115,15 @@ do {
                 if pressed { game.mouseDown(mapped) } else { game.mouseUp(mapped) }
             case .mouseWheel(_, let y):
                 if !host.hasScreen(), y != 0 { game.wheelHotbar(y > 0 ? -1 : 1) }
+            case .text(let text): host.screenText(text)
+            case .focusChanged(let focused):
+                if !focused {
+                    game.clearInput()
+                    controlHeld = false
+                    window.setRelativeMouse(false)
+                } else if !host.hasScreen() {
+                    window.setRelativeMouse(true)
+                }
             default: break
             }
         }
@@ -114,7 +138,10 @@ do {
             let frame = host.buildFrame(game: game, target: target, partial: partial, timeSec: timeSec)
             try backend.render(frame, target: target)
         }
-        if host.hasScreen() { window.setRelativeMouse(false) }
+        if host.hasScreen() {
+            window.setRelativeMouse(false)
+            window.setTextInput(true)
+        }
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.001))
     }
     game.saveAndFlush(synchronous: true)

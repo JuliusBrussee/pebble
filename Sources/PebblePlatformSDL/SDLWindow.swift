@@ -15,6 +15,7 @@ public enum WindowEvent: Sendable {
     case mouseButton(button: Int, pressed: Bool)
     case mouseWheel(x: Float, y: Float)
     case text(String)
+    case focusChanged(Bool)
 }
 
 public final class VulkanSurface: @unchecked Sendable {
@@ -72,6 +73,30 @@ public final class SDLWindow: @unchecked Sendable {
         pb_window_set_relative_mouse(handle, enabled ? 1 : 0)
     }
 
+    public var isFullscreen: Bool { pb_window_is_fullscreen(handle) != 0 }
+
+    public func setFullscreen(_ enabled: Bool) throws {
+        let result = pb_window_set_fullscreen(handle, enabled ? 1 : 0)
+        guard result == 0 else {
+            throw SDLWindowError(code: result, message: String(cString: pb_window_last_error()))
+        }
+    }
+
+    public func toggleFullscreen() throws { try setFullscreen(!isFullscreen) }
+
+    public func setTextInput(_ enabled: Bool) { pb_window_set_text_input(handle, enabled ? 1 : 0) }
+
+    public func setTitle(_ title: String) { title.withCString { pb_window_set_title(handle, $0) } }
+
+    public static var clipboardText: String {
+        get {
+            guard let pointer = pb_window_get_clipboard_text() else { return "" }
+            defer { pb_window_free(pointer) }
+            return String(cString: pointer)
+        }
+        set { newValue.withCString { _ = pb_window_set_clipboard_text($0) } }
+    }
+
     public func pollEvent() -> WindowEvent? {
         while true {
             var event = PBWindowEvent()
@@ -92,6 +117,8 @@ public final class SDLWindow: @unchecked Sendable {
                     $0.withMemoryRebound(to: CChar.self, capacity: 32) { String(cString: $0) }
                 }
                 return .text(text)
+            case PB_WINDOW_EVENT_FOCUS_GAINED: return .focusChanged(true)
+            case PB_WINDOW_EVENT_FOCUS_LOST: return .focusChanged(false)
             default: continue
             }
         }
