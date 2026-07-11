@@ -153,7 +153,9 @@ final class WindowsGameHost: GameHost {
             viewProj: camera.viewProj, shadowMat: camera.shadowMat,
             light: SIMD4<Float>(dayLight, uniforms.gamma, ambient, shadowsOn ? 1 : 0),
             fog: SIMD4<Float>(uniforms.fogStart, uniforms.fogEnd, 0, 1),
-            fogColor: fogColor, misc: SIMD4<Float>(Float(timeSec), 0, 0, 0))
+            fogColor: fogColor,
+            misc: SIMD4<Float>(Float(timeSec), game.settings.clouds ? 1 : 0,
+                               Float(world.dim.rawValue), world.raining ? 1 : 0))
         let maximumDistanceSquared = (renderDistance + 24) * (renderDistance + 24)
         for (key, section) in sections {
             let origin = SIMD3<Float>(Float(Double(key.cx * 16) - cam.x),

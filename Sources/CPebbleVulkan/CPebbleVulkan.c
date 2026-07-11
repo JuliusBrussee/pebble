@@ -1771,6 +1771,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     memcpy(sky_constants, shared_uniforms + 160, 16);
     memcpy(&sky_constants[4], shared_uniforms + 128, 4);
     memcpy(&sky_constants[5], shared_uniforms + 176, 4);
+    memcpy(&sky_constants[8], shared_uniforms + 180, 12);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer->sky_pipeline);
     vkCmdPushConstants(command, renderer->sky_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(sky_constants), sky_constants);
