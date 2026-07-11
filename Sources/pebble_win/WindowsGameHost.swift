@@ -86,6 +86,8 @@ final class WindowsGameHost: GameHost {
     private weak var tradingMob: Mob?
     private var externalContainerCommit: (() -> Void)?
     private var signLine = 0
+    private weak var activeGame: GameCore?
+    private var craftingGrid: [ItemStack?] = Array(repeating: nil, count: 9)
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -164,6 +166,7 @@ final class WindowsGameHost: GameHost {
 
     func buildFrame(game: GameCore, target: RenderTarget,
                     partial: Double, timeSec: Double) -> FramePacket {
+        activeGame = game
         mixer.setVolumes(master: game.settings.volumes["master"] ?? 0.8,
                          categories: game.settings.volumes.filter { $0.key != "master" })
         tickAtlasAnimations(timeSec: timeSec)
@@ -905,6 +908,8 @@ final class WindowsGameHost: GameHost {
                 appendSignScreen(width: width, height: height)
             } else if screenKind == "pause" || screenKind == "death" {
                 appendActionScreen(game: game, width: width, height: height)
+            } else if screenKind == "crafting" {
+                appendCraftingScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1233,6 +1238,38 @@ final class WindowsGameHost: GameHost {
         }
     }
 
+    private func appendCraftingScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.1, 0.11, 0.14, 0.98))
+        _ = uiCanvas.text("CRAFTING", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        let craftX = panelX + 42, craftY = panelY + 48
+        for index in 0..<9 {
+            inventorySlot(craftingGrid[index], x: craftX + Float(index % 3) * slot,
+                          y: craftY + Float(index / 3) * slot, selected: false)
+        }
+        _ = uiCanvas.text("->", x: panelX + 190, y: panelY + 92, scale: 2.4,
+                          color: SIMD4<Float>(0.7, 0.74, 0.78, 1))
+        inventorySlot(matchCrafting(craftingGrid, 3, 3)?.out,
+                      x: panelX + 262, y: panelY + 90, selected: true)
+        let inventoryY = panelY + 220
+        for row in 0..<3 {
+            for column in 0..<9 {
+                let index = 9 + row * 9 + column
+                inventorySlot(player.inventory[index], x: panelX + 14 + Float(column) * slot,
+                              y: inventoryY + Float(row) * slot, selected: false)
+            }
+        }
+        for column in 0..<9 {
+            inventorySlot(player.inventory[column], x: panelX + 14 + Float(column) * slot,
+                          y: inventoryY + 3 * slot + 10, selected: column == player.selectedSlot)
+        }
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func inventorySlot(_ stack: ItemStack?, x: Float, y: Float, selected: Bool) {
         uiCanvas.fillRect(x: x, y: y, width: 38, height: 38,
                           color: selected ? SIMD4<Float>(0.8, 0.82, 0.9, 1)
@@ -1280,6 +1317,10 @@ final class WindowsGameHost: GameHost {
         }
         if button == 0, screenOpen, screenKind == "multiplayer" {
             handleMultiplayerClick(game: game)
+            return
+        }
+        if screenOpen, screenKind == "crafting" {
+            handleCraftingClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -1607,6 +1648,75 @@ final class WindowsGameHost: GameHost {
         }
     }
 
+    private enum CraftingHit { case grid(Int), output, player(Int) }
+
+    private func craftingHitAtMouse() -> CraftingHit? {
+        let slot: Float = 42
+        let panelWidth = slot * 9 + 28, panelHeight: Float = 392
+        let panelX = (lastScreenSize.x - panelWidth) / 2
+        let panelY = (lastScreenSize.y - panelHeight) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        let craftX = panelX + 42, craftY = panelY + 48
+        let craftColumn = Int((x - craftX) / slot), craftRow = Int((y - craftY) / slot)
+        if x >= craftX, y >= craftY, craftColumn >= 0, craftColumn < 3,
+           craftRow >= 0, craftRow < 3,
+           (x - craftX).truncatingRemainder(dividingBy: slot) < 38,
+           (y - craftY).truncatingRemainder(dividingBy: slot) < 38 {
+            return .grid(craftRow * 3 + craftColumn)
+        }
+        if x >= panelX + 262, x < panelX + 300, y >= panelY + 90, y < panelY + 128 {
+            return .output
+        }
+        let inventoryY = panelY + 220, inventoryX = panelX + 14
+        let column = Int((x - inventoryX) / slot)
+        guard x >= inventoryX, column >= 0, column < 9,
+              (x - inventoryX).truncatingRemainder(dividingBy: slot) < 38 else { return nil }
+        let mainRow = Int((y - inventoryY) / slot)
+        if y >= inventoryY, mainRow >= 0, mainRow < 3,
+           (y - inventoryY).truncatingRemainder(dividingBy: slot) < 38 {
+            return .player(9 + mainRow * 9 + column)
+        }
+        let hotbarY = inventoryY + 3 * slot + 10
+        if y >= hotbarY, y < hotbarY + 38 { return .player(column) }
+        return nil
+    }
+
+    private func handleCraftingClick(button: Int, game: GameCore) {
+        guard let player = game.player, let hit = craftingHitAtMouse() else { return }
+        switch hit {
+        case .grid(let index):
+            transferSlot(button: button, get: { self.craftingGrid[index] },
+                         set: { self.craftingGrid[index] = $0 })
+        case .player(let index):
+            transferSlot(button: button, get: { player.inventory[index] },
+                         set: { player.inventory[index] = $0 })
+        case .output:
+            guard let result = matchCrafting(craftingGrid, 3, 3)?.out else { return }
+            if let carried = carriedStack {
+                guard carried.id == result.id,
+                      carried.count + result.count <= itemDef(result.id).maxStack else { return }
+                carried.count += result.count
+            } else {
+                carriedStack = result.copy()
+            }
+            let returns = consumeCraftingGrid(&craftingGrid)
+            for item in returns where !player.give(item) {
+                _ = spawnItem(game.world, player.x, player.y, player.z, item)
+            }
+            game.advance("craft_any")
+        }
+        playUI("ui.button.click")
+    }
+
+    private func returnCraftingGrid() {
+        guard let game = activeGame, let player = game.player else { return }
+        for index in craftingGrid.indices {
+            guard let stack = craftingGrid[index] else { continue }
+            if !player.give(stack) { _ = spawnItem(game.world, player.x, player.y, player.z, stack) }
+            craftingGrid[index] = nil
+        }
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -1724,6 +1834,7 @@ final class WindowsGameHost: GameHost {
     func hasScreen() -> Bool { screenOpen }
     func screenPausesGame() -> Bool { screenOpen }
     func openScreen(_ kind: String, _ data: ScreenData?) {
+        if screenOpen, screenKind == "crafting", kind != "crafting" { returnCraftingGrid() }
         screenKind = kind; screenData = data; screenOpen = true
         if kind == "sign" {
             signLine = 0
@@ -1759,6 +1870,7 @@ final class WindowsGameHost: GameHost {
         titleWorldSelection = 0; titleWorldOffset = 0; pendingWorldDeleteID = nil
     }
     func closeAllScreens() {
+        if screenKind == "crafting" { returnCraftingGrid() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
