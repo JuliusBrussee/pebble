@@ -1162,6 +1162,12 @@ final class WindowsGameHost: GameHost {
                                   y: buttonY + 136, scale: 1,
                                   color: SIMD4<Float>(0.58, 0.65, 0.7, 1))
         }
+        if let message = chatLines.last,
+           message.localizedCaseInsensitiveContains("connection failed") ||
+           message.localizedCaseInsensitiveContains("disconnected") {
+            uiCanvas.textCentered(message, centerX: width / 2, y: height - 58, scale: 1.2,
+                                  color: SIMD4<Float>(1, 0.35, 0.35, 1))
+        }
         uiCanvas.textCentered("SDL3 + VULKAN", centerX: width / 2, y: height - 34,
                               scale: 1.2, color: SIMD4<Float>(0.55, 0.62, 0.68, 1))
     }

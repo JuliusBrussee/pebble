@@ -743,6 +743,10 @@ public final class NetGuestSession {
             game.exitToTitle()
             game.host?.pushChat("§cDisconnected: \(reason)")
             game.host?.showActionBar("§cDisconnected: \(reason)", 200)
+        } else {
+            game.host?.openTitleScreen()
+            game.host?.pushChat("§cConnection failed: \(reason)")
+            game.host?.showActionBar("§cConnection failed: \(reason)", 200)
         }
     }
 
