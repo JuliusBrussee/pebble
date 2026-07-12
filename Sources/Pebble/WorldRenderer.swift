@@ -964,8 +964,6 @@ final class WorldRenderer {
         let shadowOK = settings.shadows && world.dim == .overworld && sky.dayLight > 0.1 && sunDir.y > 0.05
 
         var shadowMat = matrix_identity_float4x4
-        var lightViewM = matrix_identity_float4x4
-        var lightProjM = matrix_identity_float4x4
         // --- shadow pass ---
         if shadowOK {
             let r: Float = 72
@@ -981,8 +979,6 @@ final class WorldRenderer {
             snap.columns.3.x = -anchorClip.x.truncatingRemainder(dividingBy: texel)
             snap.columns.3.y = -anchorClip.y.truncatingRemainder(dividingBy: texel)
             shadowMat = snap * shadowMat
-            lightViewM = lightView
-            lightProjM = lightProj
             let spd = MTLRenderPassDescriptor()
             spd.depthAttachment.texture = shadowTexture
             spd.depthAttachment.loadAction = .clear
