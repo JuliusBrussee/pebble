@@ -103,6 +103,8 @@ final class WindowsGameHost: GameHost {
     private var smithingTemplate: ItemStack?
     private var smithingBase: ItemStack?
     private var smithingAddition: ItemStack?
+    private var beaconPayment: ItemStack?
+    private var beaconPendingPower: String?
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -935,6 +937,8 @@ final class WindowsGameHost: GameHost {
                 appendStonecutterScreen(game: game, width: width, height: height)
             } else if screenKind == "smithing" {
                 appendSmithingScreen(game: game, width: width, height: height)
+            } else if screenKind == "beacon" {
+                appendBeaconScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1462,6 +1466,34 @@ final class WindowsGameHost: GameHost {
         if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
+    private let beaconPowers: [(id: String, title: String, level: Int)] = [
+        ("speed", "SPEED", 1), ("haste", "HASTE", 1),
+        ("resistance", "RESISTANCE", 2), ("jump_boost", "JUMP BOOST", 2),
+        ("strength", "STRENGTH", 3),
+    ]
+
+    private func appendBeaconScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player, let beacon = screenData?.be else { return }
+        let panelWidth: Float = 406, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.08, 0.13, 0.15, 0.98))
+        _ = uiCanvas.text("BEACON  LEVEL \(beacon.levels ?? 0)", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        for (index, power) in beaconPowers.enumerated() {
+            let x = panelX + 20 + Float(index % 2) * 150, y = panelY + 48 + Float(index / 2) * 44
+            let unlocked = (beacon.levels ?? 0) >= power.level
+            actionButton(power.title, x: x, y: y, width: 138)
+            if !unlocked { uiCanvas.fillRect(x: x, y: y, width: 138, height: 34, color: SIMD4<Float>(0, 0, 0, 0.55)) }
+            if beaconPendingPower == power.id {
+                uiCanvas.fillRect(x: x, y: y + 30, width: 138, height: 4, color: SIMD4<Float>(0.35, 0.9, 1, 1))
+            }
+        }
+        inventorySlot(beaconPayment, x: panelX + 318, y: panelY + 72, selected: false)
+        actionButton("CONFIRM", x: panelX + 268, y: panelY + 132, width: 118)
+        appendWorkstationInventory(player: player, panelX: panelX, panelY: panelY)
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func appendWorkstationInventory(player: Player, panelX: Float, panelY: Float) {
         let slot: Float = 42, inventoryY = panelY + 220
         for row in 0..<3 { for column in 0..<9 {
@@ -1550,6 +1582,10 @@ final class WindowsGameHost: GameHost {
         }
         if screenOpen, screenKind == "smithing" {
             handleSmithingClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "beacon" {
+            handleBeaconClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -2255,6 +2291,41 @@ final class WindowsGameHost: GameHost {
         smithingTemplate = nil; smithingBase = nil; smithingAddition = nil
     }
 
+    private func handleBeaconClick(button: Int, game: GameCore) {
+        guard let player = game.player, let beacon = screenData?.be else { return }
+        let panelX = (lastScreenSize.x - 406) / 2, panelY = (lastScreenSize.y - 392) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        for (index, power) in beaconPowers.enumerated() {
+            let bx = panelX + 20 + Float(index % 2) * 150, by = panelY + 48 + Float(index / 2) * 44
+            if x >= bx, x < bx + 138, y >= by, y < by + 34, (beacon.levels ?? 0) >= power.level {
+                beaconPendingPower = power.id; playUI("ui.button.click"); return
+            }
+        }
+        if x >= panelX + 318, x < panelX + 356, y >= panelY + 72, y < panelY + 110 {
+            if let carried = carriedStack,
+               !["iron_ingot", "gold_ingot", "diamond", "emerald", "netherite_ingot"].contains(itemName(carried.id)) { return }
+            transferSlot(button: button, get: { self.beaconPayment }, set: { self.beaconPayment = $0 })
+        } else if x >= panelX + 268, x < panelX + 386, y >= panelY + 132, y < panelY + 166 {
+            guard let power = beaconPendingPower, let payment = beaconPayment, (beacon.levels ?? 0) > 0 else { return }
+            beacon.primary = power
+            beacon.secondary = (beacon.levels ?? 0) >= 4 ? power : nil
+            payment.count -= 1
+            if payment.count <= 0 { beaconPayment = nil }
+            playUI("block.beacon.power_select")
+            closeAllScreens()
+            return
+        } else if let index = workstationInventoryIndex(panelX: panelX, panelY: panelY) {
+            transferSlot(button: button, get: { player.inventory[index] }, set: { player.inventory[index] = $0 })
+        } else { return }
+        playUI("ui.button.click")
+    }
+
+    private func returnBeaconPayment() {
+        guard let game = activeGame, let player = game.player, let payment = beaconPayment else { return }
+        if !player.give(payment) { _ = spawnItem(game.world, player.x, player.y, player.z, payment) }
+        beaconPayment = nil
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -2380,7 +2451,9 @@ final class WindowsGameHost: GameHost {
         if screenOpen, screenKind == "grindstone", kind != "grindstone" { returnGrindstoneItems() }
         if screenOpen, screenKind == "stonecutter", kind != "stonecutter" { returnStonecutterInput() }
         if screenOpen, screenKind == "smithing", kind != "smithing" { returnSmithingItems() }
+        if screenOpen, screenKind == "beacon", kind != "beacon" { returnBeaconPayment() }
         screenKind = kind; screenData = data; screenOpen = true
+        if kind == "beacon" { beaconPendingPower = data?.be?.primary }
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
             let x = data?.x ?? 0, y = data?.y ?? 0, z = data?.z ?? 0
@@ -2433,6 +2506,7 @@ final class WindowsGameHost: GameHost {
         if screenKind == "grindstone" { returnGrindstoneItems() }
         if screenKind == "stonecutter" { returnStonecutterInput() }
         if screenKind == "smithing" { returnSmithingItems() }
+        if screenKind == "beacon" { returnBeaconPayment() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
