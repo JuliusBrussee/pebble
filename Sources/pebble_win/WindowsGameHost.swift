@@ -108,6 +108,7 @@ final class WindowsGameHost: GameHost {
     private var creativeScrollRow = 0
     private var creativeSearch = ""
     private var hoveredStack: ItemStack?
+    private var menuSelection = 0
     private var subtitles: [(text: String, frames: Int)] = []
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
@@ -1936,7 +1937,7 @@ final class WindowsGameHost: GameHost {
         } else if x >= listX + 286 && x < listX + 560 && y >= buttonY + 46 && y < buttonY + 80 {
             beginMultiplayer(game: game)
         } else if x >= listX && x < listX + 274 && y >= buttonY + 92 && y < buttonY + 126 {
-            screenReturnKind = "title"; screenKind = "options"
+            screenReturnKind = "title"; screenKind = "options"; menuSelection = 0; moveMenuSelection(0)
         } else if x >= listX + 286 && x < listX + 560 &&
                   y >= buttonY + 92 && y < buttonY + 126 {
             exitRequested = true
@@ -2056,7 +2057,7 @@ final class WindowsGameHost: GameHost {
             let limits = [30, 60, 120, 144, 250]
             let current = limits.firstIndex(of: game.settings.maxFps) ?? 1
             game.settings.maxFps = limits[(current + 1) % limits.count]
-        case 13: screenKind = "accessibility"
+        case 13: screenKind = "accessibility"; menuSelection = 0; moveMenuSelection(0)
         case 14:
             let value = game.settings.volumes["master"] ?? 0.8
             game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
@@ -2107,7 +2108,7 @@ final class WindowsGameHost: GameHost {
         } else if y >= lastScreenSize.y / 2 - 6 && y < lastScreenSize.y / 2 + 28 {
             if game.netHost == nil && game.netGuest == nil, game.startLanHost() { closeAllScreens() }
         } else if y >= lastScreenSize.y / 2 + 42 && y < lastScreenSize.y / 2 + 76 {
-            screenReturnKind = "pause"; screenKind = "options"
+            screenReturnKind = "pause"; screenKind = "options"; menuSelection = 0; moveMenuSelection(0)
         } else if y >= lastScreenSize.y / 2 + 90 && y < lastScreenSize.y / 2 + 124 {
             game.saveAndFlush(synchronous: true); exitRequested = true
         }
@@ -2803,8 +2804,14 @@ final class WindowsGameHost: GameHost {
         screenOpen = true
     }
     func openChat(_ prefix: String) { screenKind = "chat"; textBuffer = prefix; screenOpen = true }
-    func openDeathScreen(_ message: String) { screenKind = "death"; screenMessage = message; screenOpen = true }
-    func openPauseScreen() { screenKind = "pause"; screenOpen = true }
+    func openDeathScreen(_ message: String) {
+        screenKind = "death"; screenMessage = message; screenOpen = true
+        menuSelection = 0; moveMenuSelection(0)
+    }
+    func openPauseScreen() {
+        screenKind = "pause"; screenOpen = true
+        menuSelection = 0; moveMenuSelection(0)
+    }
     func openTitleScreen() {
         screenKind = "title"; screenOpen = true
         titleWorldSelection = 0; titleWorldOffset = 0; pendingWorldDeleteID = nil
@@ -2858,7 +2865,16 @@ final class WindowsGameHost: GameHost {
     }
     func screenKey(_ code: String, game: GameCore) -> Bool {
         guard screenOpen else { return false }
-        if screenKind == "title", (code == "ArrowUp" || code == "ArrowDown") {
+        if ["pause", "death", "options", "accessibility"].contains(screenKind),
+           (code == "ArrowUp" || code == "ArrowDown") {
+            moveMenuSelection(code == "ArrowUp" ? -1 : 1)
+            return false
+        } else if ["pause", "death", "options", "accessibility"].contains(screenKind), code == "Enter" {
+            if screenKind == "pause" || screenKind == "death" { handleActionScreenClick(game: game) }
+            else if screenKind == "options" { handleOptionsClick(game: game) }
+            else { handleAccessibilityClick(game: game) }
+            return !screenOpen
+        } else if screenKind == "title", (code == "ArrowUp" || code == "ArrowDown") {
             let count = game.listWorlds().count
             if count > 0 {
                 titleWorldSelection = min(count - 1, max(0, titleWorldSelection + (code == "ArrowUp" ? -1 : 1)))
@@ -2923,6 +2939,20 @@ final class WindowsGameHost: GameHost {
             return true
         }
         return false
+    }
+
+    private func moveMenuSelection(_ delta: Int) {
+        let count = screenKind == "death" ? 2 : screenKind == "pause" ? 4 :
+                    screenKind == "accessibility" ? 8 : 17
+        menuSelection = (menuSelection + delta + count) % count
+        let centerX = lastScreenSize.x / 2
+        switch screenKind {
+        case "death": screenMousePosition = SIMD2<Float>(centerX, lastScreenSize.y / 2 + Float(menuSelection) * 48 + 16)
+        case "pause": screenMousePosition = SIMD2<Float>(centerX, lastScreenSize.y / 2 - 54 + Float(menuSelection) * 48 + 16)
+        case "options": screenMousePosition = SIMD2<Float>(centerX, lastScreenSize.y * 0.18 + Float(menuSelection) * 36 + 16)
+        case "accessibility": screenMousePosition = SIMD2<Float>(centerX, lastScreenSize.y * 0.34 + Float(menuSelection) * 42 + 16)
+        default: break
+        }
     }
     func screenScroll(_ delta: Int) {
         guard screenOpen, delta != 0 else { return }
