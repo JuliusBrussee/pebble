@@ -106,6 +106,7 @@ final class WindowsGameHost: GameHost {
     private var beaconPayment: ItemStack?
     private var beaconPendingPower: String?
     private var creativeScrollRow = 0
+    private var creativeSearch = ""
     private var hoveredStack: ItemStack?
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
@@ -1290,7 +1291,13 @@ final class WindowsGameHost: GameHost {
         }
     }
 
-    private var creativeItemIDs: [Int] { itemDefs.indices.filter { itemName($0) != "air" } }
+    private var creativeItemIDs: [Int] {
+        let query = creativeSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return itemDefs.indices.filter {
+            itemName($0) != "air" && (query.isEmpty || itemName($0).contains(query) ||
+                                      itemDef($0).displayName.lowercased().contains(query))
+        }
+    }
 
     private func appendCreativeScreen(game: GameCore, width: Float, height: Float) {
         guard let player = game.player else { return }
@@ -1299,6 +1306,8 @@ final class WindowsGameHost: GameHost {
         uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
                           color: SIMD4<Float>(0.09, 0.1, 0.12, 0.98))
         _ = uiCanvas.text("CREATIVE INVENTORY", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        textField(creativeSearch.isEmpty ? "SEARCH_" : creativeSearch + "_",
+                  x: panelX + 212, y: panelY + 8, width: 180, focused: true)
         let ids = creativeItemIDs
         let maxRow = max(0, (ids.count + 8) / 9 - 4)
         creativeScrollRow = min(max(0, creativeScrollRow), maxRow)
@@ -2576,6 +2585,7 @@ final class WindowsGameHost: GameHost {
             screenKind = kind; screenData = data; screenOpen = true
         }
         if kind == "beacon" { beaconPendingPower = data?.be?.primary }
+        if kind == "creative" { creativeSearch = ""; creativeScrollRow = 0 }
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
             let x = data?.x ?? 0, y = data?.y ?? 0, z = data?.z ?? 0
@@ -2641,6 +2651,11 @@ final class WindowsGameHost: GameHost {
             } else if createWorldField == 1, createWorldSeed.count < 64 {
                 createWorldSeed.append(contentsOf: filtered.prefix(64 - createWorldSeed.count))
             }
+        } else if screenOpen, screenKind == "creative" {
+            if creativeSearch.count < 40 {
+                creativeSearch.append(contentsOf: filtered.prefix(40 - creativeSearch.count))
+                creativeScrollRow = 0
+            }
         } else if screenOpen, screenKind == "anvil" {
             if anvilName.count < 48 { anvilName.append(contentsOf: filtered.prefix(48 - anvilName.count)) }
         } else if screenOpen, screenKind == "multiplayer" {
@@ -2690,6 +2705,9 @@ final class WindowsGameHost: GameHost {
             return !screenOpen
         } else if screenKind == "anvil", code == "Backspace" {
             if !anvilName.isEmpty { anvilName.removeLast() }
+            return false
+        } else if screenKind == "creative", code == "Backspace" {
+            if !creativeSearch.isEmpty { creativeSearch.removeLast(); creativeScrollRow = 0 }
             return false
         } else if screenKind == "title", code == "Enter" {
             let worlds = game.listWorlds()
