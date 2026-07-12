@@ -924,6 +924,8 @@ final class WindowsGameHost: GameHost {
                 appendMultiplayerScreen(width: width, height: height)
             } else if screenKind == "options" {
                 appendOptionsScreen(game: game, width: width, height: height)
+            } else if screenKind == "accessibility" {
+                appendAccessibilityScreen(game: game, width: width, height: height)
             } else if screenKind == "trading" {
                 appendTradingScreen(game: game, width: width, height: height)
             } else if screenKind == "sign" {
@@ -1054,7 +1056,7 @@ final class WindowsGameHost: GameHost {
             "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
             "INVERT Y  \(game.settings.invertY ? "ON" : "OFF")",
             "AUTO JUMP  \(game.settings.autoJump ? "ON" : "OFF")",
-            "SUBTITLES  \(game.settings.subtitles ? "ON" : "OFF")",
+            "ACCESSIBILITY...",
             "MASTER VOLUME  \(Int((game.settings.volumes["master"] ?? 0.8) * 100))%",
             "MUSIC VOLUME  \(Int((game.settings.volumes["music"] ?? 0.5) * 100))%",
         ]
@@ -1062,6 +1064,24 @@ final class WindowsGameHost: GameHost {
             actionButton(title, x: x, y: y + Float(index) * 36, width: 380)
         }
         actionButton("DONE", x: x, y: y + Float(rows.count) * 36, width: 380)
+    }
+
+    private func appendAccessibilityScreen(game: GameCore, width: Float, height: Float) {
+        uiCanvas.textCentered("ACCESSIBILITY", centerX: width / 2, y: height * 0.2, scale: 4)
+        let x = width / 2 - 190, y = height * 0.34
+        let rows = [
+            "SUBTITLES  \(game.settings.subtitles ? "ON" : "OFF")",
+            "AUTO JUMP  \(game.settings.autoJump ? "ON" : "OFF")",
+            "REDUCE MOTION  \(game.settings.reduceMotion ? "ON" : "OFF")",
+            "REDUCED FLASHES  \(game.settings.reducedFlashes ? "ON" : "OFF")",
+            "HIGH CONTRAST UI  \(game.settings.highContrast ? "ON" : "OFF")",
+            "DARKNESS PULSE  \(Int(game.settings.darknessPulse * 100))%",
+            "SIMPLE MESH  \(game.settings.simpleMesh ? "ON" : "OFF")",
+        ]
+        for (index, title) in rows.enumerated() {
+            actionButton(title, x: x, y: y + Float(index) * 42, width: 380)
+        }
+        actionButton("DONE", x: x, y: y + Float(rows.count) * 42, width: 380)
     }
 
     private func appendTitleScreen(game: GameCore, width: Float, height: Float) {
@@ -1666,6 +1686,10 @@ final class WindowsGameHost: GameHost {
             handleOptionsClick(game: game)
             return
         }
+        if button == 0, screenOpen, screenKind == "accessibility" {
+            handleAccessibilityClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "title" {
             handleTitleClick(game: game)
             return
@@ -1942,7 +1966,7 @@ final class WindowsGameHost: GameHost {
         case 9: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
         case 10: game.settings.invertY.toggle()
         case 11: game.settings.autoJump.toggle()
-        case 12: game.settings.subtitles.toggle()
+        case 12: screenKind = "accessibility"
         case 13:
             let value = game.settings.volumes["master"] ?? 0.8
             game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
@@ -1951,6 +1975,26 @@ final class WindowsGameHost: GameHost {
             game.settings.volumes["music"] = value >= 1 ? 0 : min(1, value + 0.1)
         case 15:
             game.applySettings(); screenKind = screenReturnKind
+        default: return
+        }
+        game.applySettings()
+        playUI("ui.button.click")
+    }
+
+    private func handleAccessibilityClick(game: GameCore) {
+        let x = lastScreenSize.x / 2 - 190, y = lastScreenSize.y * 0.34
+        guard screenMousePosition.x >= x, screenMousePosition.x < x + 380 else { return }
+        let localY = screenMousePosition.y - y
+        guard localY >= 0 else { return }
+        switch Int(localY / 42) {
+        case 0: game.settings.subtitles.toggle()
+        case 1: game.settings.autoJump.toggle()
+        case 2: game.settings.reduceMotion.toggle()
+        case 3: game.settings.reducedFlashes.toggle()
+        case 4: game.settings.highContrast.toggle()
+        case 5: game.settings.darknessPulse = game.settings.darknessPulse >= 1 ? 0 : min(1, game.settings.darknessPulse + 0.25)
+        case 6: game.setMeshMode(simple: !game.settings.simpleMesh)
+        case 7: game.applySettings(); screenKind = "options"
         default: return
         }
         game.applySettings()
@@ -2794,6 +2838,7 @@ final class WindowsGameHost: GameHost {
         if screenKind == "title" { return true }
         if screenKind == "create_world" { screenKind = "title"; return true }
         if screenKind == "multiplayer" { screenKind = "title"; return true }
+        if screenKind == "accessibility" { screenKind = "options"; return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true
