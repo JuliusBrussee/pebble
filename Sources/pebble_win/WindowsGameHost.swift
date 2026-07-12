@@ -1107,6 +1107,7 @@ final class WindowsGameHost: GameHost {
             "HIGH CONTRAST UI  \(game.settings.highContrast ? "ON" : "OFF")",
             "DARKNESS PULSE  \(Int(game.settings.darknessPulse * 100))%",
             "SIMPLE MESH  \(game.settings.simpleMesh ? "ON" : "OFF")",
+            "GAME SPEED  \(String(format: "%g", game.settings.gameSpeed ?? 1))X",
         ]
         for (index, title) in rows.enumerated() {
             actionButton(title, x: x, y: y + Float(index) * 42, width: 380)
@@ -2114,7 +2115,10 @@ final class WindowsGameHost: GameHost {
         case 4: game.settings.highContrast.toggle()
         case 5: game.settings.darknessPulse = game.settings.darknessPulse >= 1 ? 0 : min(1, game.settings.darknessPulse + 0.25)
         case 6: game.setMeshMode(simple: !game.settings.simpleMesh)
-        case 7: game.applySettings(); screenKind = "options"
+        case 7:
+            let current = game.settings.gameSpeed ?? 1
+            game.settings.gameSpeed = current >= 3 ? 0.5 : min(3, current + 0.25)
+        case 8: game.applySettings(); screenKind = "options"
         default: return
         }
         game.applySettings()
@@ -3007,7 +3011,7 @@ final class WindowsGameHost: GameHost {
 
     private func moveMenuSelection(_ delta: Int) {
         let count = screenKind == "death" ? 2 : screenKind == "pause" ? 4 :
-                    screenKind == "accessibility" ? 8 : 17
+                    screenKind == "accessibility" ? 9 : 17
         menuSelection = (menuSelection + delta + count) % count
         let centerX = lastScreenSize.x / 2
         switch screenKind {
