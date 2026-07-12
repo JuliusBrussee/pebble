@@ -112,6 +112,7 @@ final class WindowsGameHost: GameHost {
     private var subtitles: [(text: String, frames: Int)] = []
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
+    private var titleAction = 0
     private var pendingWorldDeleteID: String?
     private var createWorldName = ""
     private var createWorldSeed = ""
@@ -1905,7 +1906,7 @@ final class WindowsGameHost: GameHost {
         let worlds = game.listWorlds()
         if x >= listX && x < listX + 560 && y >= listY && y < listY + rowHeight * 5 {
             let index = titleWorldOffset + Int((y - listY) / rowHeight)
-            if index < worlds.count { titleWorldSelection = index; pendingWorldDeleteID = nil }
+            if index < worlds.count { titleWorldSelection = index; titleAction = 0; pendingWorldDeleteID = nil }
             playUI("ui.button.click")
             return
         }
@@ -2814,7 +2815,7 @@ final class WindowsGameHost: GameHost {
     }
     func openTitleScreen() {
         screenKind = "title"; screenOpen = true
-        titleWorldSelection = 0; titleWorldOffset = 0; pendingWorldDeleteID = nil
+        titleWorldSelection = 0; titleWorldOffset = 0; titleAction = 0; pendingWorldDeleteID = nil
     }
     func closeAllScreens() {
         if screenKind == "crafting" { returnCraftingGrid() }
@@ -2881,6 +2882,9 @@ final class WindowsGameHost: GameHost {
                 pendingWorldDeleteID = nil
             }
             return false
+        } else if screenKind == "title", (code == "ArrowLeft" || code == "ArrowRight") {
+            moveTitleAction(code == "ArrowLeft" ? -1 : 1)
+            return false
         } else if screenKind == "create_world", code == "Tab" {
             createWorldField = createWorldField == 0 ? 1 : 0
             return false
@@ -2915,6 +2919,10 @@ final class WindowsGameHost: GameHost {
             saveWorldRename(game: game)
             return false
         } else if screenKind == "title", code == "Enter" {
+            if titleAction > 0 {
+                handleTitleClick(game: game)
+                return !screenOpen
+            }
             let worlds = game.listWorlds()
             if worlds.isEmpty {
                 beginCreateWorld(game: game)
@@ -2953,6 +2961,19 @@ final class WindowsGameHost: GameHost {
         case "accessibility": screenMousePosition = SIMD2<Float>(centerX, lastScreenSize.y * 0.34 + Float(menuSelection) * 42 + 16)
         default: break
         }
+    }
+
+    private func moveTitleAction(_ delta: Int) {
+        titleAction = (titleAction + delta + 7) % 7
+        let listX = lastScreenSize.x / 2 - 280
+        let buttonY = lastScreenSize.y * 0.39 + 42 * 5 + 12
+        let positions: [SIMD2<Float>] = [
+            SIMD2(listX + 90, buttonY + 16), SIMD2(listX + 280, buttonY + 16),
+            SIMD2(listX + 470, buttonY + 16), SIMD2(listX + 137, buttonY + 62),
+            SIMD2(listX + 423, buttonY + 62), SIMD2(listX + 137, buttonY + 108),
+            SIMD2(listX + 423, buttonY + 108),
+        ]
+        screenMousePosition = positions[titleAction]
     }
     func screenScroll(_ delta: Int) {
         guard screenOpen, delta != 0 else { return }
