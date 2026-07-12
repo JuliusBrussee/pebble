@@ -119,7 +119,10 @@ let package = Package(
             name: "CPebbleVulkan",
             path: "Sources/CPebbleVulkan",
             publicHeadersPath: "include",
-            linkerSettings: [.linkedLibrary("vulkan")]
+            linkerSettings: [
+                .linkedLibrary("vulkan-1", .when(platforms: [.windows])),
+                .linkedLibrary("vulkan", .when(platforms: [.macOS, .linux])),
+            ]
         ),
         .target(
             name: "PebbleRendererVulkan",
@@ -131,7 +134,11 @@ let package = Package(
             name: "CPebbleSDL",
             path: "Sources/CPebbleSDL",
             publicHeadersPath: "include",
-            linkerSettings: [.linkedLibrary("SDL3"), .linkedLibrary("vulkan")]
+            linkerSettings: [
+                .linkedLibrary("SDL3"),
+                .linkedLibrary("vulkan-1", .when(platforms: [.windows])),
+                .linkedLibrary("vulkan", .when(platforms: [.macOS, .linux])),
+            ]
         ),
         .target(
             name: "PebblePlatformSDL",
