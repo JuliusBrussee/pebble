@@ -4,6 +4,7 @@
 // and input + screens reach the app through the GameHost protocol.
 
 import Foundation
+import PebbleCoreBase
 
 // =============================================================================
 // Constants (the frozen baseline)
@@ -36,14 +37,19 @@ public final class LoadProf {
     public let enabled = ProcessInfo.processInfo.environment["PEBBLE_PROF"] != nil
     private var lock = NSLock()
     private var buckets: [String: (count: Int, ms: Double)] = [:]
-    private var lastPrint = CFAbsoluteTimeGetCurrent()
+    private let clock = SystemMonotonicClock()
+    private var lastPrint: Double
+
+    private init() {
+        lastPrint = clock.nowSeconds()
+    }
 
     @inline(__always)
     public func time<T>(_ name: String, _ body: () -> T) -> T {
         if !enabled { return body() }
-        let t0 = CFAbsoluteTimeGetCurrent()
+        let t0 = clock.nowSeconds()
         let r = body()
-        let ms = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+        let ms = (clock.nowSeconds() - t0) * 1000
         lock.lock()
         let b = buckets[name] ?? (0, 0)
         buckets[name] = (b.count + 1, b.ms + ms)
@@ -52,7 +58,7 @@ public final class LoadProf {
     }
     public func tickPrint() {
         guard enabled else { return }
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = clock.nowSeconds()
         if now - lastPrint < 2 { return }
         lastPrint = now
         lock.lock()
