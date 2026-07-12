@@ -233,6 +233,15 @@ do {
             default: break
             }
         }
+        let frameLimit = game.settings.maxFps
+        if frameLimit > 0 && frameLimit < 250 {
+            let targetNanoseconds = UInt64(1_000_000_000 / frameLimit)
+            let current = DispatchTime.now().uptimeNanoseconds
+            let elapsed = current - lastFrame
+            if elapsed < targetNanoseconds {
+                Thread.sleep(forTimeInterval: Double(targetNanoseconds - elapsed) / 1_000_000_000)
+            }
+        }
         let now = DispatchTime.now().uptimeNanoseconds
         let dtMs = Double(now - lastFrame) / 1_000_000
         lastFrame = now

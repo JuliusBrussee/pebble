@@ -1063,7 +1063,7 @@ final class WindowsGameHost: GameHost {
             "VIEW BOBBING  \(game.settings.viewBobbing ? "ON" : "OFF")",
             "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
             "INVERT Y  \(game.settings.invertY ? "ON" : "OFF")",
-            "AUTO JUMP  \(game.settings.autoJump ? "ON" : "OFF")",
+            "FRAME LIMIT  \(game.settings.maxFps >= 250 ? "UNLIMITED" : "\(game.settings.maxFps) FPS")",
             "ACCESSIBILITY...",
             "MASTER VOLUME  \(Int((game.settings.volumes["master"] ?? 0.8) * 100))%",
             "MUSIC VOLUME  \(Int((game.settings.volumes["music"] ?? 0.5) * 100))%",
@@ -1977,7 +1977,10 @@ final class WindowsGameHost: GameHost {
         case 8: game.settings.viewBobbing.toggle()
         case 9: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
         case 10: game.settings.invertY.toggle()
-        case 11: game.settings.autoJump.toggle()
+        case 11:
+            let limits = [30, 60, 120, 144, 250]
+            let current = limits.firstIndex(of: game.settings.maxFps) ?? 1
+            game.settings.maxFps = limits[(current + 1) % limits.count]
         case 12: screenKind = "accessibility"
         case 13:
             let value = game.settings.volumes["master"] ?? 0.8
