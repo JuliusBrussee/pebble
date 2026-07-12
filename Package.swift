@@ -205,6 +205,7 @@ let package = Package(
         .executableTarget(
             name: "pebserver",
             dependencies: [
+                "PebbleCoreBase",
                 "PebbleCore",
                 .target(name: "PebbleStoreSQLite", condition: .when(platforms: [.macOS])),
                 .target(name: "PebbleNetApple", condition: .when(platforms: [.macOS])),
