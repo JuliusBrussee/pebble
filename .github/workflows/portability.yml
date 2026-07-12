@@ -178,12 +178,13 @@ jobs:
           "VULKAN_SDK=$($vulkanSdk.FullName)" | Out-File $env:GITHUB_ENV -Append
           "C_INCLUDE_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$($vulkanSdk.FullName)\Include" | Out-File $env:GITHUB_ENV -Append
           "LIBRARY_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$($vulkanSdk.FullName)\Lib" | Out-File $env:GITHUB_ENV -Append
-          "LIB=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$($vulkanSdk.FullName)\Lib;$env:LIB" | Out-File $env:GITHUB_ENV -Append
           "$($vulkanSdk.FullName)\Bin" | Out-File $env:GITHUB_PATH -Append
       - name: Build client and server
         shell: pwsh
         run: |
-          swift build -c release --product pebble-win
+          swift build -c release --product pebble-win `
+            -Xlinker "/LIBPATH:$env:SDL3_DIR\lib" `
+            -Xlinker "/LIBPATH:$env:VULKAN_SDK\Lib"
           if ($LASTEXITCODE -ne 0) { throw "pebble-win build failed with exit code $LASTEXITCODE" }
           swift build -c release --product pebserver
           if ($LASTEXITCODE -ne 0) { throw "pebserver build failed with exit code $LASTEXITCODE" }
