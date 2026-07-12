@@ -41,13 +41,13 @@ jobs:
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
         run: |
           swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$RUNNER_TEMP/pebsmoke-deterministic.json"
-      - name: Run portable smoke (vck1, protocol, renderabi, codecs)
+      - name: Run portable smoke
         env:
           PEBBLE_CI: "1"
           PEBBLE_DATA_DIR: ${{ runner.temp }}/pebble-data
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
         run: |
-          swift run -c release pebsmoke-portable --require-suite vck1 --require-suite protocol --require-suite renderabi --require-suite codecs --report-json "$RUNNER_TEMP/pebsmoke-portable.json"
+          swift run -c release pebsmoke-portable --require-suite math --require-suite vck1 --require-suite protocol --require-suite persistence --require-suite renderabi --require-suite codecs --require-suite audio --require-suite sockets --report-json "$RUNNER_TEMP/pebsmoke-portable.json"
       - name: Preserve macOS app/server/full smoke builds
         run: |
           swift build -c release --target Pebble
@@ -108,7 +108,7 @@ jobs:
           PEBBLE_GOLDENS_DIR: ${{ github.workspace }}\goldens
         run: |
           swift run -c release pebsmoke-deterministic --require-suite deterministic --report-json "$env:RUNNER_TEMP\pebsmoke-deterministic.json"
-          swift run -c release pebsmoke-portable --require-suite vck1 --require-suite protocol --require-suite renderabi --require-suite codecs --report-json "$env:RUNNER_TEMP\pebsmoke-portable.json"
+          swift run -c release pebsmoke-portable --require-suite math --require-suite vck1 --require-suite protocol --require-suite persistence --require-suite renderabi --require-suite codecs --require-suite audio --require-suite sockets --report-json "$env:RUNNER_TEMP\pebsmoke-portable.json"
       - name: Portable import hygiene
         shell: pwsh
         run: |

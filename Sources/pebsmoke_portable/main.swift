@@ -1,7 +1,7 @@
 // Portable smoke harness: fail-closed CLI mirroring pebsmoke_deterministic's shape,
 // but running the wider set of portable suites (math, vck1, protocol, persistence,
-// renderabi, codecs, audio, sockets). Suites not yet implemented by a lane run zero
-// checks by design — requiring them with --require-suite is meant to fail today.
+// renderabi, codecs, audio, sockets). Required suites fail closed if a future
+// regression removes all checks.
 
 import Foundation
 import PebbleCoreBase
