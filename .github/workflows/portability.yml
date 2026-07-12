@@ -166,9 +166,13 @@ jobs:
         run: |
           vcpkg install sdl3:x64-windows
           choco install vulkan-sdk -y --no-progress
+          $vulkanSdk = Get-ChildItem C:\VulkanSDK -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $vulkanSdk) { throw "Vulkan SDK installation directory not found" }
           "SDL3_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows" | Out-File $env:GITHUB_ENV -Append
-          "C_INCLUDE_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$env:VULKAN_SDK\Include" | Out-File $env:GITHUB_ENV -Append
-          "LIBRARY_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$env:VULKAN_SDK\Lib" | Out-File $env:GITHUB_ENV -Append
+          "VULKAN_SDK=$($vulkanSdk.FullName)" | Out-File $env:GITHUB_ENV -Append
+          "C_INCLUDE_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\include;$($vulkanSdk.FullName)\Include" | Out-File $env:GITHUB_ENV -Append
+          "LIBRARY_PATH=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows\lib;$($vulkanSdk.FullName)\Lib" | Out-File $env:GITHUB_ENV -Append
+          "$($vulkanSdk.FullName)\Bin" | Out-File $env:GITHUB_PATH -Append
       - name: Build client and server
         shell: pwsh
         run: |
