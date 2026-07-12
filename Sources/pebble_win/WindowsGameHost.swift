@@ -1038,21 +1038,28 @@ final class WindowsGameHost: GameHost {
     private func appendOptionsScreen(game: GameCore, width: Float, height: Float) {
         uiCanvas.textCentered("OPTIONS", centerX: width / 2, y: height * 0.18, scale: 4)
         let x = width / 2 - 190
-        let y = height * 0.34
+        let y = height * 0.27
         let rows = [
             "RENDER DISTANCE  \(game.settings.renderDistance)",
+            "FIELD OF VIEW  \(game.settings.fov)",
+            "ENTITY DISTANCE  \(Int(game.settings.entityDistance))",
             "SHADOWS  \(game.settings.shadows ? "ON" : "OFF")",
             "CLOUDS  \(game.settings.clouds ? "ON" : "OFF")",
+            "PARTICLES  \(["MINIMAL", "DECREASED", "ALL"][max(0, min(2, game.settings.particles))])",
             "ULTRA GRAPHICS  \(game.settings.shader == "ultra" ? "ON" : "OFF")",
             "BRIGHTNESS  \(Int(game.settings.gamma * 100))%",
+            "VIEW BOBBING  \(game.settings.viewBobbing ? "ON" : "OFF")",
             "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
+            "INVERT Y  \(game.settings.invertY ? "ON" : "OFF")",
+            "AUTO JUMP  \(game.settings.autoJump ? "ON" : "OFF")",
+            "SUBTITLES  \(game.settings.subtitles ? "ON" : "OFF")",
             "MASTER VOLUME  \(Int((game.settings.volumes["master"] ?? 0.8) * 100))%",
             "MUSIC VOLUME  \(Int((game.settings.volumes["music"] ?? 0.5) * 100))%",
         ]
         for (index, title) in rows.enumerated() {
-            actionButton(title, x: x, y: y + Float(index) * 42, width: 380)
+            actionButton(title, x: x, y: y + Float(index) * 36, width: 380)
         }
-        actionButton("DONE", x: x, y: y + Float(rows.count) * 42, width: 380)
+        actionButton("DONE", x: x, y: y + Float(rows.count) * 36, width: 380)
     }
 
     private func appendTitleScreen(game: GameCore, width: Float, height: Float) {
@@ -1886,25 +1893,32 @@ final class WindowsGameHost: GameHost {
 
     private func handleOptionsClick(game: GameCore) {
         let x = lastScreenSize.x / 2 - 190
-        let y = lastScreenSize.y * 0.34
+        let y = lastScreenSize.y * 0.27
         guard screenMousePosition.x >= x && screenMousePosition.x < x + 380 else { return }
         let localY = screenMousePosition.y - y
-        let row = Int(localY / 42)
+        let row = Int(localY / 36)
         guard localY >= 0 else { return }
         switch row {
-        case 0: game.settings.renderDistance = game.settings.renderDistance >= 24 ? 4 : game.settings.renderDistance + 2
-        case 1: game.settings.shadows.toggle()
-        case 2: game.settings.clouds.toggle()
-        case 3: game.settings.shader = game.settings.shader == "ultra" ? nil : "ultra"
-        case 4: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
-        case 5: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
-        case 6:
+        case 0: game.settings.renderDistance = game.settings.renderDistance >= 16 ? 4 : game.settings.renderDistance + 2
+        case 1: game.settings.fov = game.settings.fov >= 110 ? 50 : game.settings.fov + 5
+        case 2: game.settings.entityDistance = game.settings.entityDistance >= 128 ? 32 : game.settings.entityDistance + 16
+        case 3: game.settings.shadows.toggle()
+        case 4: game.settings.clouds.toggle()
+        case 5: game.settings.particles = (game.settings.particles + 1) % 3
+        case 6: game.settings.shader = game.settings.shader == "ultra" ? nil : "ultra"
+        case 7: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
+        case 8: game.settings.viewBobbing.toggle()
+        case 9: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
+        case 10: game.settings.invertY.toggle()
+        case 11: game.settings.autoJump.toggle()
+        case 12: game.settings.subtitles.toggle()
+        case 13:
             let value = game.settings.volumes["master"] ?? 0.8
             game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 7:
+        case 14:
             let value = game.settings.volumes["music"] ?? 0.5
             game.settings.volumes["music"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 8:
+        case 15:
             game.applySettings(); screenKind = screenReturnKind
         default: return
         }
