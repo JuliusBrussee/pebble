@@ -92,6 +92,8 @@ public struct RenderABISuite: PortableSuite {
         checkUniform("SpriteUniforms", SpriteUniforms.self, declared: SpriteUniforms.stride, expected: 144)
         checkUniform("CompositeUniforms", CompositeUniforms.self, declared: CompositeUniforms.stride, expected: 48)
         checkUniform("EntityUniforms", EntityUniforms.self, declared: EntityUniforms.stride, expected: 1728)
+        checkUniform("EntityDrawPacketConstants", EntityDrawPacketConstants.self,
+                     declared: EntityDrawPacketConstants.stride, expected: 128)
         checkUniform("ParticleUniforms", ParticleUniforms.self, declared: ParticleUniforms.stride, expected: 96)
         checkUniform("UIUniforms", UIUniforms.self, declared: UIUniforms.stride, expected: 16)
         checkUniform("LogoUniforms", LogoUniforms.self, declared: LogoUniforms.stride, expected: 16)
@@ -99,6 +101,9 @@ public struct RenderABISuite: PortableSuite {
         eq("EntityUniforms.partCount", EntityUniforms.partCount, 24)
         eq("EntityUniforms offset(parts)", MemoryLayout<EntityUniforms>.offset(of: \.parts), 128)
         eq("EntityUniforms offset(light)", MemoryLayout<EntityUniforms>.offset(of: \.light), 128 + 24 * 64)
+        eq("EntityDrawPacketConstants parts offset", EntityDrawPacketConstants.partsOffset, 128)
+        eq("EntityDrawPacketConstants parts stride", EntityDrawPacketConstants.partsStride, 24 * 64)
+        eq("EntityDrawPacketConstants packet stride", EntityDrawPacketConstants.packetStride, 128 + 24 * 64)
 
         // -- ShaderManifest: no duplicate names, no binding-slot collisions ----
         let names = ShaderManifest.pipelines.map(\.name)

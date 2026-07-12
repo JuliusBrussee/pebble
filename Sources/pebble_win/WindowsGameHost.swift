@@ -875,7 +875,7 @@ final class WindowsGameHost: GameHost {
             var velocity = SIMD3<Double>((randomUnit() - 0.5) * 0.08,
                                          randomUnit() * 0.1,
                                          (randomUnit() - 0.5) * 0.08)
-            var light: Float = 1
+            let light: Float = 1
             var shrink = true
             switch type {
             case "block":

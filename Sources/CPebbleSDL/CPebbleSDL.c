@@ -150,7 +150,7 @@ const char * const *pb_window_vulkan_extensions(uint32_t *out_count) {
 
 int32_t pb_window_create_vulkan_surface(PBWindow *window, uintptr_t instance, uint64_t *out_surface) {
     if (window == NULL || instance == 0 || out_surface == NULL) return -1;
-    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    VkSurfaceKHR surface = (VkSurfaceKHR)0;
     if (!SDL_Vulkan_CreateSurface(window->window, (VkInstance)instance, NULL, &surface)) return -2;
     *out_surface = (uint64_t)surface;
     return 0;

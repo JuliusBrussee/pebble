@@ -312,7 +312,6 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
             raw.screen.2 = 0; raw.screen.3 = 0
             raw.vertex_count = UInt32(draw.vertexRange.count)
             raw.first_vertex = draw.vertexRange.lowerBound
-            raw.depth_mode = draw.pipeline == .entityHDR ? 1 : 0
             rawUI.append(raw)
         }
         var rawEntities: [PBVulkanEntityDraw] = []
@@ -344,6 +343,7 @@ public final class VulkanRendererBackend: RendererBackend, @unchecked Sendable {
             }
             raw.vertex_count = UInt32(draw.vertexRange.count)
             raw.first_vertex = draw.vertexRange.lowerBound
+            raw.depth_mode = draw.pipeline == .entityHDR ? 1 : 0
             rawEntities.append(raw)
         }
         var rawParticles: [PBVulkanParticleDraw] = []

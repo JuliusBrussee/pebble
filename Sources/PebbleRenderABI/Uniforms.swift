@@ -95,9 +95,6 @@
     }
 
     public static let stride = 128
-    public static let partsOffset = 128
-    public static let partsStride = 1536
-    public static let packetStride = stride + partsStride
 }
 
 /// celestial_vs/celestial_fs uniforms (buffer index 1) — mirrors `CelestialU`
@@ -238,6 +235,9 @@
     }
 
     public static let stride = 128
+    public static let partsOffset = stride
+    public static let partsStride = ABIMat4.stride * EntityUniforms.partCount
+    public static let packetStride = stride + partsStride
 }
 
 /// particle_vs uniforms (buffer index **2** — buffers 0/1 are the two vertex

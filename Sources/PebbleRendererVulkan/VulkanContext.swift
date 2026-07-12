@@ -38,7 +38,7 @@ public final class VulkanContext: @unchecked Sendable {
             return pointer
         }
         defer { for pointer in allocated { pointer.deallocate() } }
-        let pointers = allocated.map { UnsafePointer<CChar>($0) }
+        let pointers: [UnsafePointer<CChar>?] = allocated.map { UnsafePointer<CChar>($0) }
         let status = pointers.withUnsafeBufferPointer { buffer in
             pb_vulkan_create_with_extensions(validation ? 1 : 0,
                                               buffer.baseAddress, UInt32(buffer.count), &handle)
