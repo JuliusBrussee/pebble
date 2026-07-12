@@ -125,7 +125,6 @@ final class AppleNetTransportConnection: NetTransportConnection {
     }
 
     private func deliver(_ msg: NetMsg) {
-        FileHandle.standardError.write(Data("DEBUG deliver\n".utf8))
         stateLock.lock()
         pendingMessages.append(msg)
         stateLock.unlock()
@@ -173,9 +172,9 @@ final class AppleNetTransportConnection: NetTransportConnection {
     }
 
     func send(_ m: NetMsg) {
-        guard !isClosedNow() else { FileHandle.standardError.write(Data("DEBUG send-skip-closed\n".utf8)); return }
-        nw.send(content: FrameCodec.encode(m.encode()), completion: .contentProcessed { err in
-            if let err { FileHandle.standardError.write(Data("DEBUG send-error \(err)\n".utf8)) }
+        guard !isClosedNow() else { return }
+        nw.send(content: FrameCodec.encode(m.encode()), completion: .contentProcessed { [weak self] error in
+            if let error { self?.finish("send failed: \(error.localizedDescription)") }
         })
     }
 
