@@ -490,7 +490,7 @@ final class WindowsGameHost: GameHost {
                 cell = falling.blockCell; emissive = false
             } else if let tnt = entity as? TNTEntity {
                 cell = Int(PebbleCore.cell(B.tnt))
-                emissive = (tnt.fuse / 5).isMultiple(of: 2)
+                emissive = game.settings.reducedFlashes ? false : (tnt.fuse / 5).isMultiple(of: 2)
             } else { continue }
             guard cell >> 4 > 0, let mesh = cubeEntityMesh(cell: cell, emissive: emissive) else { continue }
             let x = entity.prevX + (entity.x - entity.prevX) * partial
@@ -811,7 +811,8 @@ final class WindowsGameHost: GameHost {
         for reference in game.world.entities {
             guard let entity = reference as? Entity, !entity.dead else { continue }
             if entity is LightningBolt {
-                for segment in 0..<32 {
+                let reduced = game.settings.reducedFlashes
+                for segment in 0..<(reduced ? 10 : 32) {
                     let jitter = Double(Int(hash2(UInt32(truncatingIfNeeded: entity.id), segment, entity.age / 2) % 100)) / 500 - 0.1
                     instances.append(ParticleInstance(
                         x: Float(entity.x + jitter - cameraPosition.x),
@@ -819,7 +820,8 @@ final class WindowsGameHost: GameHost {
                         z: Float(entity.z - jitter - cameraPosition.z),
                         u0: 0, v0: 0, u1: 1, v1: 1,
                         layerSize: Float(tileId("crit_particle") * 256 + 12),
-                        r: 0.78, g: 0.88, b: 1, light: 1))
+                        r: reduced ? 0.42 : 0.78, g: reduced ? 0.5 : 0.88,
+                        b: reduced ? 0.62 : 1, light: reduced ? 0.35 : 1))
                 }
             } else if let crystal = entity as? EndCrystal, let target = crystal.beamTarget {
                 let start = SIMD3<Double>(crystal.x, crystal.y + 1, crystal.z)
@@ -832,7 +834,10 @@ final class WindowsGameHost: GameHost {
                         x: Float(position.x - cameraPosition.x), y: Float(position.y - cameraPosition.y),
                         z: Float(position.z - cameraPosition.z), u0: 0, v0: 0, u1: 1, v1: 1,
                         layerSize: Float(tileId("portal_particle") * 256 + 9),
-                        r: 0.95, g: 0.25, b: 1, light: 1))
+                        r: game.settings.reducedFlashes ? 0.55 : 0.95,
+                        g: game.settings.reducedFlashes ? 0.2 : 0.25,
+                        b: game.settings.reducedFlashes ? 0.62 : 1,
+                        light: game.settings.reducedFlashes ? 0.45 : 1))
                 }
             }
         }
@@ -840,7 +845,9 @@ final class WindowsGameHost: GameHost {
 
     private func spawnParticles(_ type: String, x: Double, y: Double, z: Double,
                                 count: Int, spread: Double, cell: Int = 0) {
-        for _ in 0..<max(0, count) {
+        let particleLevel = activeGame?.settings.particles ?? 2
+        let scaledCount = particleLevel == 0 ? min(2, count) : particleLevel == 1 ? max(1, count / 2) : count
+        for _ in 0..<max(0, scaledCount) {
             if particles.count >= 4096 { particles.removeFirst() }
             let ox = (randomUnit() - 0.5) * spread * 2
             let oy = (randomUnit() - 0.5) * spread * 2
