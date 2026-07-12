@@ -108,6 +108,7 @@ final class WindowsGameHost: GameHost {
     private var creativeScrollRow = 0
     private var creativeSearch = ""
     private var hoveredStack: ItemStack?
+    private var subtitles: [(text: String, frames: Int)] = []
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -968,6 +969,7 @@ final class WindowsGameHost: GameHost {
                               x: 12, y: 34, scale: 1.5,
                               color: SIMD4<Float>(0.8, 0.85, 0.9, 0.9))
             appendSurvivalHUD(game: game, width: width, height: height)
+            appendSubtitles(width: width, height: height)
         }
         if screenOpen, carriedStack == nil, let hoveredStack {
             appendItemTooltip(hoveredStack, width: width, height: height)
@@ -1599,6 +1601,35 @@ final class WindowsGameHost: GameHost {
             _ = uiCanvas.text(line, x: x + 9, y: y + 8 + Float(index) * 12, scale: scale,
                               color: index == 0 ? SIMD4<Float>(1, 1, 1, 1) : SIMD4<Float>(0.72, 0.55, 1, 1),
                               shadow: false)
+        }
+    }
+
+    private func appendSubtitles(width: Float, height: Float) {
+        guard activeGame?.settings.subtitles == true else { subtitles.removeAll(); return }
+        subtitles = subtitles.compactMap { entry in
+            entry.frames > 1 ? (entry.text, entry.frames - 1) : nil
+        }
+        for (index, entry) in subtitles.suffix(5).reversed().enumerated() {
+            let textWidth = Float(entry.text.count * 6) * 1.15 + 16
+            let x = width - textWidth - 12, y = height - 92 - Float(index) * 24
+            uiCanvas.fillRect(x: x, y: y, width: textWidth, height: 20,
+                              color: SIMD4<Float>(0.02, 0.02, 0.025, 0.78))
+            _ = uiCanvas.text(entry.text, x: x + 8, y: y + 6, scale: 1.15,
+                              color: SIMD4<Float>(1, 1, 1, 1), shadow: false)
+        }
+    }
+
+    private func addSubtitle(_ sound: String) {
+        guard activeGame?.settings.subtitles == true else { return }
+        let words = sound.split(separator: ".").dropFirst().map {
+            $0.replacingOccurrences(of: "_", with: " ")
+        }
+        let text = (words.isEmpty ? sound : words.joined(separator: " ")).uppercased()
+        if let index = subtitles.firstIndex(where: { $0.text == text }) {
+            subtitles[index].frames = 80
+        } else {
+            subtitles.append((text, 80))
+            if subtitles.count > 12 { subtitles.removeFirst(subtitles.count - 12) }
         }
     }
 
@@ -2785,6 +2816,7 @@ final class WindowsGameHost: GameHost {
     func setBossBars(_ bars: [BossBarInfo]) { bossBars = bars }
 
     func playSound(_ name: String, _ x: Double, _ y: Double, _ z: Double, _ volume: Double, _ pitch: Double) {
+        addSubtitle(name)
         if name == "jukebox.stop" { stopDisc(); return }
         if name.hasPrefix("jukebox.play.") {
             playDisc(name, position: SIMD3<Double>(x, y, z), volume: volume)
