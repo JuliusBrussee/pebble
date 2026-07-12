@@ -71,12 +71,18 @@ do {
     let executableDirectory = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
     let resourcePackURLs: [URL] = {
         if let explicit = option("--resource-pack") { return [URL(fileURLWithPath: explicit)] }
-        let candidates = [
+        let configured = (game.settings.resourcePacks ?? []).compactMap { filename -> URL? in
+            let safeName = URL(fileURLWithPath: filename).lastPathComponent
+            guard safeName == filename else { return nil }
+            let url = paths.resourcePacksDir.appendingPathComponent(safeName)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        let bundled = [
             executableDirectory.appendingPathComponent("assets/Faithful 32x - 1.20.1.zip"),
             URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
                 .appendingPathComponent("packaging/Faithful 32x - 1.20.1.zip"),
-        ]
-        return candidates.filter { FileManager.default.fileExists(atPath: $0.path) }
+        ].filter { FileManager.default.fileExists(atPath: $0.path) }
+        return configured + Array(bundled.prefix(1))
     }()
     let host = try WindowsGameHost(renderer: backend,
                                    resourcePacks: ResourcePackStack(urls: resourcePackURLs),
