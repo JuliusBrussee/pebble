@@ -53,6 +53,13 @@ jobs:
           swift build -c release --target Pebble
           swift build -c release --target pebserver
           swift build -c release --target pebsmoke
+      - name: Run full engine smoke
+        env:
+          PEBBLE_CI: "1"
+          PEBBLE_DATA_DIR: ${{ runner.temp }}/pebble-full-data
+          PEBBLE_GOLDENS_DIR: ${{ github.workspace }}/goldens
+        run: |
+          swift run -c release pebsmoke --data-root "$PEBBLE_DATA_DIR" --goldens-dir "$PEBBLE_GOLDENS_DIR"
       - name: Goldens unchanged
         run: git diff --exit-code -- goldens/
       - name: Portable import hygiene
