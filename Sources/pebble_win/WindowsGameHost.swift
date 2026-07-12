@@ -936,6 +936,8 @@ final class WindowsGameHost: GameHost {
                                   color: SIMD4<Float>(0.03, 0.04, 0.06, 0.92))
                 _ = uiCanvas.text("> " + textBuffer + "_", x: 24, y: height - 48, scale: 2,
                                   color: SIMD4<Float>(1, 1, 1, 1))
+            } else if screenKind == "connecting" {
+                appendConnectingScreen(game: game, width: width, height: height)
             } else if screenKind == "title" {
                 appendTitleScreen(game: game, width: width, height: height)
             } else if screenKind == "create_world" {
@@ -1227,6 +1229,18 @@ final class WindowsGameHost: GameHost {
         }
         actionButton("CONNECT", x: x + 48, y: y + 292, width: 202)
         actionButton("CANCEL", x: x + 270, y: y + 292, width: 202)
+    }
+
+    private func appendConnectingScreen(game: GameCore, width: Float, height: Float) {
+        uiCanvas.gradientRect(x: 0, y: 0, width: width, height: height,
+                              top: SIMD4<Float>(0.025, 0.05, 0.09, 1),
+                              bottom: SIMD4<Float>(0.08, 0.14, 0.13, 1))
+        uiCanvas.textCentered("CONNECTING", centerX: width / 2, y: height / 2 - 42, scale: 4)
+        uiCanvas.textCentered(game.netGuest?.status.uppercased() ?? "STARTING CONNECTION",
+                              centerX: width / 2, y: height / 2 + 12, scale: 1.5,
+                              color: SIMD4<Float>(0.7, 0.8, 0.86, 1))
+        uiCanvas.textCentered("ESCAPE TO CANCEL", centerX: width / 2, y: height / 2 + 54, scale: 1.2,
+                              color: SIMD4<Float>(0.55, 0.62, 0.68, 1))
     }
 
     private func appendRenameWorldScreen(width: Float, height: Float) {
@@ -1984,7 +1998,8 @@ final class WindowsGameHost: GameHost {
         game.applySettings()
         let skin = (try? Data(contentsOf: customSkinURL)) ?? Data()
         _ = game.joinLan(netDial(endpoint), name: name, skin: skin)
-        closeAllScreens()
+        screenKind = "connecting"
+        screenOpen = true
     }
 
     private func handleMultiplayerClick(game: GameCore) {
@@ -2921,6 +2936,10 @@ final class WindowsGameHost: GameHost {
     func escapeScreen() -> Bool {
         guard screenOpen, screenKind != "death" else { return false }
         if screenKind == "title" { return true }
+        if screenKind == "connecting" {
+            activeGame?.exitToTitle()
+            return true
+        }
         if screenKind == "create_world" { screenKind = "title"; return true }
         if screenKind == "multiplayer" { screenKind = "title"; return true }
         if screenKind == "rename_world" {
