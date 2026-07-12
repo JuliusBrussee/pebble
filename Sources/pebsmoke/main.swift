@@ -2250,6 +2250,20 @@ do {
 }
 
 // ---------------------------------------------------------------------------
+final class SmokeConnectionRetainer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var connections: [any NetTransportConnection] = []
+
+    func retain(_ connection: any NetTransportConnection) {
+        lock.lock(); connections.append(connection); lock.unlock()
+    }
+
+    func closeAll() {
+        lock.lock(); let retained = connections; connections.removeAll(); lock.unlock()
+        for connection in retained { connection.close() }
+    }
+}
+
 section("Apple net transport (real sockets, concurrent accept race)")
 do {
     // AppleNetTransportConnection starts receiving immediately in init(),
@@ -2274,12 +2288,12 @@ do {
         var received = 0
         let receivedLock = NSLock()
         let doneSem = DispatchSemaphore(value: 0)
+        let acceptedConnections = SmokeConnectionRetainer()
         listener.onAccept = { conn in
-            FileHandle.standardError.write(Data("DEBUG accepted round \(round)\n".utf8))
+            acceptedConnections.retain(conn)
             // mirrors NetHostSession's default executor: a real async hop to
             // main, after the accepted connection already started receiving
             DispatchQueue.main.async {
-                FileHandle.standardError.write(Data("DEBUG onMessage assigned round \(round)\n".utf8))
                 conn.onMessage = { _ in
                     receivedLock.lock()
                     received += 1
@@ -2309,11 +2323,11 @@ do {
             RunLoop.main.run(until: Date().addingTimeInterval(0.005))
         }
         receivedLock.lock(); let gotThisRound = received; receivedLock.unlock()
-        FileHandle.standardError.write(Data("DEBUG round \(round) got \(gotThisRound)/\(msgsPerRound)\n".utf8))
         totalSent += msgsPerRound
         totalReceived += gotThisRound
         if gotThisRound != msgsPerRound { anyRoundLostOrDuplicated = true }
         client.close()
+        acceptedConnections.closeAll()
         listener.stop()
     }
     check("apple transport: no messages lost/duplicated under concurrent accept (\(totalReceived)/\(totalSent))",
