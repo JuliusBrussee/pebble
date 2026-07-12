@@ -483,8 +483,11 @@ final class WindowsGameHost: GameHost {
 
     private func appendCubeEntities(game: GameCore, cameraPosition: SIMD3<Double>, partial: Double,
                                     shared: ChunkSharedUniforms, builder: inout FrameBuilder) {
+        let maximumDistanceSquared = game.settings.entityDistance * game.settings.entityDistance
         for reference in game.world.entities {
             guard let entity = reference as? Entity, !entity.dead else { continue }
+            let dx = entity.x - cameraPosition.x, dz = entity.z - cameraPosition.z
+            if dx * dx + dz * dz > maximumDistanceSquared { continue }
             let cell: Int
             let emissive: Bool
             if let falling = entity as? FallingBlockEntity {
@@ -738,7 +741,10 @@ final class WindowsGameHost: GameHost {
         let corners: [Float] = [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]
         var instances: [ParticleInstance] = []
         instances.reserveCapacity(particles.count + 128)
+        let maximumDistanceSquared = game.settings.entityDistance * game.settings.entityDistance
         for particle in particles {
+            let dx = particle.position.x - cameraPosition.x, dz = particle.position.z - cameraPosition.z
+            if dx * dx + dz * dz > maximumDistanceSquared { continue }
             let lifeScale = particle.shrink ? max(0.2, 1 - particle.age / particle.lifetime) : 1
             let encoded = Double(particle.tile * 256) + min(255, particle.size * lifeScale * 100)
             instances.append(ParticleInstance(
@@ -771,6 +777,7 @@ final class WindowsGameHost: GameHost {
 
     private func appendEntitySprites(game: GameCore, cameraPosition: SIMD3<Double>,
                                      instances: inout [ParticleInstance]) {
+        let maximumDistanceSquared = game.settings.entityDistance * game.settings.entityDistance
         let spriteTypes: Set<String> = ["snowball", "egg", "ender_pearl", "xp_bottle",
             "thrown_potion", "firework", "eye_of_ender", "fishing_bobber", "wither_skull",
             "dragon_fireball", "fireball", "shulker_bullet", "llama_spit"]
@@ -778,7 +785,7 @@ final class WindowsGameHost: GameHost {
             guard let entity = reference as? Entity, !entity.dead,
                   entity.type == "item" || entity.type == "xp_orb" || spriteTypes.contains(entity.type) else { continue }
             let dx = entity.x - cameraPosition.x, dz = entity.z - cameraPosition.z
-            if dx * dx + dz * dz > 64 * 64 { continue }
+            if dx * dx + dz * dz > maximumDistanceSquared { continue }
             var tile = tileId("crit_particle")
             var color = SIMD3<Float>(1, 1, 1)
             var size = 0.22
@@ -811,6 +818,8 @@ final class WindowsGameHost: GameHost {
         }
         for reference in game.world.entities {
             guard let entity = reference as? Entity, !entity.dead else { continue }
+            let dx = entity.x - cameraPosition.x, dz = entity.z - cameraPosition.z
+            if dx * dx + dz * dz > maximumDistanceSquared { continue }
             if entity is LightningBolt {
                 let reduced = game.settings.reducedFlashes
                 for segment in 0..<(reduced ? 10 : 32) {
