@@ -110,7 +110,7 @@ let game = GameCore(services: EngineServices(paths: paths, worldStore: sqliteSto
 let game = GameCore(services: .live(paths: paths))
 #endif
 
-func stamp() -> String {
+@Sendable func stamp() -> String {
     let f = DateFormatter()
     f.dateFormat = "HH:mm:ss"
     return f.string(from: Date())
