@@ -37,6 +37,8 @@ public final class DirectoryWorldStore: WorldStore, @unchecked Sendable {
         withLock {
             try? fileManager.removeItem(at: worldURL(id))
             try? fileManager.removeItem(at: worldDataDirectory(id))
+            try? fileManager.removeItem(at: playerURL(id))
+            try? fileManager.removeItem(at: advancementURL(id))
             let prefix = encodedName(id + "#")
             let playerDirectory = root.appendingPathComponent("players", isDirectory: true)
             let files = (try? fileManager.contentsOfDirectory(at: playerDirectory, includingPropertiesForKeys: nil)) ?? []
