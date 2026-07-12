@@ -126,6 +126,8 @@ jobs:
         run: |
           $hits = git grep -nE 'import (AppKit|Metal|MetalKit|QuartzCore|AVFoundation|Network|Darwin|simd|CoreGraphics|ImageIO|Compression)' -- Sources/PebbleCore Sources/PebbleCoreBase Sources/PebbleRenderABI Sources/PebbleCodecs Sources/PebbleResources Sources/PebbleAudioCore Sources/PebblePlatformNative Sources/PebbleNetNative
           if ($LASTEXITCODE -eq 0) { Write-Output $hits; throw "portable target hygiene failed" }
+          if ($LASTEXITCODE -ne 1) { throw "git grep failed with exit code $LASTEXITCODE" }
+          exit 0
 
   macos-vulkan:
     name: macOS MoltenVK bootstrap and capture
