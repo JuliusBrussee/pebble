@@ -105,6 +105,7 @@ final class WindowsGameHost: GameHost {
     private var smithingAddition: ItemStack?
     private var beaconPayment: ItemStack?
     private var beaconPendingPower: String?
+    private var creativeScrollRow = 0
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -939,7 +940,9 @@ final class WindowsGameHost: GameHost {
                 appendSmithingScreen(game: game, width: width, height: height)
             } else if screenKind == "beacon" {
                 appendBeaconScreen(game: game, width: width, height: height)
-            } else if screenKind == "inventory" || screenKind == "creative" {
+            } else if screenKind == "creative" {
+                appendCreativeScreen(game: game, width: width, height: height)
+            } else if screenKind == "inventory" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
                 appendContainerScreen(game: game, width: width, height: height)
@@ -1282,6 +1285,36 @@ final class WindowsGameHost: GameHost {
         }
     }
 
+    private var creativeItemIDs: [Int] { itemDefs.indices.filter { itemName($0) != "air" } }
+
+    private func appendCreativeScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let slot: Float = 42, panelWidth = slot * 9 + 28, panelHeight: Float = 310
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.09, 0.1, 0.12, 0.98))
+        _ = uiCanvas.text("CREATIVE INVENTORY", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        let ids = creativeItemIDs
+        let maxRow = max(0, (ids.count + 8) / 9 - 4)
+        creativeScrollRow = min(max(0, creativeScrollRow), maxRow)
+        let gridX = panelX + 14, gridY = panelY + 46
+        for visible in 0..<36 {
+            let source = (creativeScrollRow * 9) + visible
+            let x = gridX + Float(visible % 9) * slot, y = gridY + Float(visible / 9) * slot
+            let stack = source < ids.count ? ItemStack(ids[source], itemDef(ids[source]).maxStack) : nil
+            inventorySlot(stack, x: x, y: y, selected: false)
+        }
+        _ = uiCanvas.text("ALL ITEMS  ROW \(creativeScrollRow + 1)/\(maxRow + 1)",
+                          x: panelX + 14, y: panelY + 220, scale: 1.05,
+                          color: SIMD4<Float>(0.65, 0.7, 0.75, 1))
+        let hotbarY = panelY + 248
+        for column in 0..<9 {
+            inventorySlot(player.inventory[column], x: gridX + Float(column) * slot,
+                          y: hotbarY, selected: column == player.selectedSlot)
+        }
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func appendCraftingScreen(game: GameCore, width: Float, height: Float) {
         guard let player = game.player else { return }
         let slot: Float = 42
@@ -1560,8 +1593,12 @@ final class WindowsGameHost: GameHost {
             handleCraftingClick(button: button, game: game)
             return
         }
-        if screenOpen, (screenKind == "inventory" || screenKind == "creative") {
+        if screenOpen, screenKind == "inventory" {
             handlePlayerInventoryClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "creative" {
+            handleCreativeClick(button: button, game: game)
             return
         }
         if screenOpen, screenKind == "enchanting" {
@@ -2052,6 +2089,37 @@ final class WindowsGameHost: GameHost {
             game.advance("craft_any")
         }
         playUI("ui.button.click")
+    }
+
+    private func handleCreativeClick(button: Int, game: GameCore) {
+        guard let player = game.player else { return }
+        let slot: Float = 42, panelWidth = slot * 9 + 28, panelHeight: Float = 310
+        let panelX = (lastScreenSize.x - panelWidth) / 2, panelY = (lastScreenSize.y - panelHeight) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        let gridX = panelX + 14, gridY = panelY + 46
+        if x >= gridX, y >= gridY {
+            let column = Int((x - gridX) / slot), row = Int((y - gridY) / slot)
+            if column >= 0, column < 9, row >= 0, row < 4,
+               (x - gridX).truncatingRemainder(dividingBy: slot) < 38,
+               (y - gridY).truncatingRemainder(dividingBy: slot) < 38 {
+                let source = creativeScrollRow * 9 + row * 9 + column
+                let ids = creativeItemIDs
+                if source < ids.count {
+                    let count = button == 2 ? 1 : itemDef(ids[source]).maxStack
+                    carriedStack = ItemStack(ids[source], count)
+                    playUI("ui.button.click")
+                }
+                return
+            }
+        }
+        let hotbarY = panelY + 248
+        if x >= gridX, x < gridX + slot * 9, y >= hotbarY, y < hotbarY + 38 {
+            let column = Int((x - gridX) / slot)
+            guard column >= 0, column < 9,
+                  (x - gridX).truncatingRemainder(dividingBy: slot) < 38 else { return }
+            transferSlot(button: button, get: { player.inventory[column] }, set: { player.inventory[column] = $0 })
+            playUI("ui.button.click")
+        }
     }
 
     private func returnInventoryCraftingGrid() {
@@ -2608,9 +2676,13 @@ final class WindowsGameHost: GameHost {
         return false
     }
     func screenScroll(_ delta: Int) {
-        guard screenOpen, screenKind == "title", delta != 0 else { return }
-        titleWorldSelection = max(0, titleWorldSelection + delta)
-        pendingWorldDeleteID = nil
+        guard screenOpen, delta != 0 else { return }
+        if screenKind == "title" {
+            titleWorldSelection = max(0, titleWorldSelection + delta)
+            pendingWorldDeleteID = nil
+        } else if screenKind == "creative" {
+            creativeScrollRow = max(0, creativeScrollRow + delta)
+        }
     }
     func escapeScreen() -> Bool {
         guard screenOpen, screenKind != "death" else { return false }
