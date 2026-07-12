@@ -212,7 +212,7 @@ do {
             case .gamepadButton(let button, let pressed):
                 let code: String?
                 switch button {
-                case 0: code = "Space"
+                case 0: code = host.hasScreen() ? "Enter" : "Space"
                 case 1: code = "Escape"
                 case 2: code = "KeyE"
                 case 3: code = "KeyQ"
