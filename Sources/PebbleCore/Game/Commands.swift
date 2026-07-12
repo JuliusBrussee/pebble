@@ -237,11 +237,12 @@ public func executeGameCommand(_ game: GameCore, _ raw: String,
         }
         fail("Could not find \(target) nearby")
     case "difficulty":
-        guard let d = ["peaceful", "easy", "normal", "hard"].firstIndex(of: arg(0) ?? "") else {
+        let difficultyNames = ["peaceful", "easy", "normal", "hard"]
+        guard let d = difficultyNames.firstIndex(of: arg(0) ?? "") else {
             return fail("Usage: /difficulty <peaceful|easy|normal|hard>")
         }
         game.setDifficulty(d)
-        ok("Difficulty set to \(DIFFICULTY_NAMES[d])")
+        ok("Difficulty set to \(difficultyNames[d].capitalized)")
     case "gamerule":
         guard let rule = arg(0) else {
             ok(world.gameRules.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", "))
