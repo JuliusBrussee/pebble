@@ -13,8 +13,10 @@ void main() {
     float radius = length(centeredUV);
     vec2 sampleUV = clamp(uv + centeredUV * sin(radius * 36.0) * portalWarp * 0.035, 0.0, 1.0);
     vec3 scene = texture(sceneTexture, sampleUV).rgb;
-    float ultra = frame.params.y;
-    vec3 bloom = max(texture(bloomTexture, uv).rgb - vec3(0.82), vec3(0.0)) * mix(0.08, 0.32, ultra);
+    float ultra = mod(floor(frame.params.y / 2.0), 2.0);
+    float bloomEnabled = mod(floor(frame.params.y / 4.0), 2.0);
+    vec3 bloom = max(texture(bloomTexture, uv).rgb - vec3(0.82), vec3(0.0)) *
+                 mix(0.08, 0.32, ultra) * bloomEnabled;
     vec3 color = scene + bloom;
     vec3 mapped = clamp((color * (2.51 * color + 0.03)) /
                         (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);

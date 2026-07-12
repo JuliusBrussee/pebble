@@ -2005,7 +2005,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
     memcpy(&composite_constants[2], shared_uniforms + 176, 8);
     float packed_environment = 0;
     memcpy(&packed_environment, shared_uniforms + 188, 4);
-    composite_constants[1] = packed_environment >= 2 ? 1 : 0;
+    composite_constants[1] = packed_environment;
     vkCmdPushConstants(command, renderer->composite_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof(composite_constants), composite_constants);
     vkCmdDraw(command, 3, 1, 0, 0);

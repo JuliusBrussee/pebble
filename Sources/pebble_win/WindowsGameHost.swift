@@ -250,7 +250,8 @@ final class WindowsGameHost: GameHost {
             misc: SIMD4<Float>(Float(cam.darkness),
                                game.settings.reduceMotion ? 0 : Float(cam.portalWarp) * (game.settings.reducedFlashes ? 0.2 : 1),
                                Float(world.dim.rawValue),
-                               (world.raining ? 1 : 0) + (uniforms.ultraOn ? 2 : 0)))
+                               (world.raining ? 1 : 0) + (uniforms.ultraOn ? 2 : 0) +
+                               (game.settings.bloom ? 4 : 0)))
         let maximumDistanceSquared = (renderDistance + 24) * (renderDistance + 24)
         for (key, section) in sections {
             let origin = SIMD3<Float>(Float(Double(key.cx * 16) - cam.x),
@@ -1048,9 +1049,9 @@ final class WindowsGameHost: GameHost {
     }
 
     private func appendOptionsScreen(game: GameCore, width: Float, height: Float) {
-        uiCanvas.textCentered("OPTIONS", centerX: width / 2, y: height * 0.18, scale: 4)
+        uiCanvas.textCentered("OPTIONS", centerX: width / 2, y: height * 0.1, scale: 4)
         let x = width / 2 - 190
-        let y = height * 0.27
+        let y = height * 0.18
         let rows = [
             "RENDER DISTANCE  \(game.settings.renderDistance)",
             "FIELD OF VIEW  \(game.settings.fov)",
@@ -1059,6 +1060,7 @@ final class WindowsGameHost: GameHost {
             "CLOUDS  \(game.settings.clouds ? "ON" : "OFF")",
             "PARTICLES  \(["MINIMAL", "DECREASED", "ALL"][max(0, min(2, game.settings.particles))])",
             "ULTRA GRAPHICS  \(game.settings.shader == "ultra" ? "ON" : "OFF")",
+            "BLOOM  \(game.settings.bloom ? "ON" : "OFF")",
             "BRIGHTNESS  \(Int(game.settings.gamma * 100))%",
             "VIEW BOBBING  \(game.settings.viewBobbing ? "ON" : "OFF")",
             "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
@@ -1960,7 +1962,7 @@ final class WindowsGameHost: GameHost {
 
     private func handleOptionsClick(game: GameCore) {
         let x = lastScreenSize.x / 2 - 190
-        let y = lastScreenSize.y * 0.27
+        let y = lastScreenSize.y * 0.18
         guard screenMousePosition.x >= x && screenMousePosition.x < x + 380 else { return }
         let localY = screenMousePosition.y - y
         let row = Int(localY / 36)
@@ -1973,22 +1975,23 @@ final class WindowsGameHost: GameHost {
         case 4: game.settings.clouds.toggle()
         case 5: game.settings.particles = (game.settings.particles + 1) % 3
         case 6: game.settings.shader = game.settings.shader == "ultra" ? nil : "ultra"
-        case 7: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
-        case 8: game.settings.viewBobbing.toggle()
-        case 9: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
-        case 10: game.settings.invertY.toggle()
-        case 11:
+        case 7: game.settings.bloom.toggle()
+        case 8: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
+        case 9: game.settings.viewBobbing.toggle()
+        case 10: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
+        case 11: game.settings.invertY.toggle()
+        case 12:
             let limits = [30, 60, 120, 144, 250]
             let current = limits.firstIndex(of: game.settings.maxFps) ?? 1
             game.settings.maxFps = limits[(current + 1) % limits.count]
-        case 12: screenKind = "accessibility"
-        case 13:
+        case 13: screenKind = "accessibility"
+        case 14:
             let value = game.settings.volumes["master"] ?? 0.8
             game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 14:
+        case 15:
             let value = game.settings.volumes["music"] ?? 0.5
             game.settings.volumes["music"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 15:
+        case 16:
             game.applySettings(); screenKind = screenReturnKind
         default: return
         }
