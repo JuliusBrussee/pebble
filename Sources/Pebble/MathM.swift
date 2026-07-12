@@ -3,7 +3,7 @@
 
 import simd
 
-func mat4Perspective(fovYRad: Float, aspect: Float, near: Float, far: Float) -> simd_float4x4 {
+func metalMat4Perspective(fovYRad: Float, aspect: Float, near: Float, far: Float) -> simd_float4x4 {
     let f = 1 / tan(fovYRad / 2)
     // Metal NDC z in [0,1]
     return simd_float4x4(columns: (
@@ -14,7 +14,7 @@ func mat4Perspective(fovYRad: Float, aspect: Float, near: Float, far: Float) -> 
     ))
 }
 
-func mat4Ortho(l: Float, r: Float, b: Float, t: Float, n: Float, f: Float) -> simd_float4x4 {
+func metalMat4Ortho(l: Float, r: Float, b: Float, t: Float, n: Float, f: Float) -> simd_float4x4 {
     simd_float4x4(columns: (
         SIMD4<Float>(2 / (r - l), 0, 0, 0),
         SIMD4<Float>(0, 2 / (t - b), 0, 0),
@@ -23,7 +23,7 @@ func mat4Ortho(l: Float, r: Float, b: Float, t: Float, n: Float, f: Float) -> si
     ))
 }
 
-func mat4LookDir(eye: SIMD3<Float>, dir: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
+func metalMat4LookDir(eye: SIMD3<Float>, dir: SIMD3<Float>, up: SIMD3<Float>) -> simd_float4x4 {
     let f = simd_normalize(dir)
     let s = simd_normalize(simd_cross(f, up))
     let u = simd_cross(s, f)

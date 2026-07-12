@@ -921,12 +921,12 @@ final class WorldRenderer {
 
         let aspect = Float(fbWidth) / Float(max(1, fbHeight))
         let far = max(256, Float(settings.renderDistance) * 16 * 1.6)
-        let proj = mat4Perspective(fovYRad: Float(cam.fov * .pi / 180), aspect: aspect, near: 0.05, far: far)
+        let proj = metalMat4Perspective(fovYRad: Float(cam.fov * .pi / 180), aspect: aspect, near: 0.05, far: far)
         let dir = SIMD3<Float>(
             Float(Foundation.cos(cam.pitch) * -Foundation.sin(cam.yaw)),
             Float(Foundation.sin(-cam.pitch)),
             Float(Foundation.cos(cam.pitch) * Foundation.cos(cam.yaw)))
-        let viewM = mat4LookDir(eye: SIMD3<Float>(0, 0, 0), dir: dir, up: SIMD3<Float>(0, 1, 0))
+        let viewM = metalMat4LookDir(eye: SIMD3<Float>(0, 0, 0), dir: dir, up: SIMD3<Float>(0, 1, 0))
         let viewProj = proj * viewM
         var frustum = Frustum()
         frustum.setFromMatrix(viewProj)
@@ -969,8 +969,8 @@ final class WorldRenderer {
         // --- shadow pass ---
         if shadowOK {
             let r: Float = 72
-            let lightView = mat4LookDir(eye: sunDir * 120, dir: -sunDir, up: SIMD3<Float>(0, 1, 0))
-            let lightProj = mat4Ortho(l: -r, r: r, b: -r, t: r, n: 1, f: 320)
+            let lightView = metalMat4LookDir(eye: sunDir * 120, dir: -sunDir, up: SIMD3<Float>(0, 1, 0))
+            let lightProj = metalMat4Ortho(l: -r, r: r, b: -r, t: r, n: 1, f: 320)
             shadowMat = lightProj * lightView
             // texel snap: pin the shadow grid to the world, not the camera —
             // continuous sub-texel drift while moving reads as edge shimmer
