@@ -106,6 +106,7 @@ final class WindowsGameHost: GameHost {
     private var beaconPayment: ItemStack?
     private var beaconPendingPower: String?
     private var creativeScrollRow = 0
+    private var hoveredStack: ItemStack?
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -904,6 +905,7 @@ final class WindowsGameHost: GameHost {
         let width = Float(target.width), height = Float(target.height)
         lastScreenSize = SIMD2<Float>(width, height)
         uiCanvas.begin(width: width, height: height)
+        hoveredStack = nil
         if screenOpen {
             uiCanvas.fillRect(x: 0, y: 0, width: width, height: height,
                               color: SIMD4<Float>(0, 0, 0, 0.58))
@@ -965,6 +967,9 @@ final class WindowsGameHost: GameHost {
                               x: 12, y: 34, scale: 1.5,
                               color: SIMD4<Float>(0.8, 0.85, 0.9, 0.9))
             appendSurvivalHUD(game: game, width: width, height: height)
+        }
+        if screenOpen, carriedStack == nil, let hoveredStack {
+            appendItemTooltip(hoveredStack, width: width, height: height)
         }
         let batch = uiCanvas.finish()
         guard !batch.vertices.isEmpty else { return }
@@ -1546,7 +1551,44 @@ final class WindowsGameHost: GameHost {
                                           : SIMD4<Float>(0.025, 0.03, 0.04, 0.95))
         uiCanvas.fillRect(x: x + 2, y: y + 2, width: 34, height: 34,
                           color: SIMD4<Float>(0.16, 0.17, 0.2, 1))
-        if let stack { inventoryItem(stack, x: x + 4, y: y + 7) }
+        if let stack {
+            inventoryItem(stack, x: x + 4, y: y + 7)
+            if screenMousePosition.x >= x, screenMousePosition.x < x + 38,
+               screenMousePosition.y >= y, screenMousePosition.y < y + 38 {
+                hoveredStack = stack
+            }
+        }
+    }
+
+    private func appendItemTooltip(_ stack: ItemStack, width: Float, height: Float) {
+        let definition = itemDef(stack.id)
+        var lines = [stack.label?.isEmpty == false ? stack.label! : definition.displayName]
+        for enchantment in stack.ench {
+            let name = enchDef(enchantment.id).displayName
+            lines.append("\(name) \(romanLevel(enchantment.lvl))")
+        }
+        let durability = definition.tool?.durability ?? definition.armor?.durability ?? 0
+        if durability > 0 { lines.append("Durability \(max(0, durability - stack.damage))/\(durability)") }
+        if stack.count > 1 { lines.append("Count \(stack.count)") }
+        let scale: Float = 1.15
+        let tooltipWidth = Float(lines.map(\.count).max() ?? 1) * 6 * scale + 18
+        let tooltipHeight = Float(lines.count) * 12 + 14
+        let x = min(width - tooltipWidth - 6, screenMousePosition.x + 14)
+        let y = min(height - tooltipHeight - 6, screenMousePosition.y + 14)
+        uiCanvas.fillRect(x: x, y: y, width: tooltipWidth, height: tooltipHeight,
+                          color: SIMD4<Float>(0.025, 0.015, 0.045, 0.97))
+        uiCanvas.fillRect(x: x + 2, y: y + 2, width: tooltipWidth - 4, height: tooltipHeight - 4,
+                          color: SIMD4<Float>(0.08, 0.045, 0.13, 0.97))
+        for (index, line) in lines.enumerated() {
+            _ = uiCanvas.text(line, x: x + 9, y: y + 8 + Float(index) * 12, scale: scale,
+                              color: index == 0 ? SIMD4<Float>(1, 1, 1, 1) : SIMD4<Float>(0.72, 0.55, 1, 1),
+                              shadow: false)
+        }
+    }
+
+    private func romanLevel(_ level: Int) -> String {
+        let values = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X"]
+        return level >= 0 && level < values.count ? values[level] : "\(level)"
     }
 
     private func inventoryItem(_ stack: ItemStack, x: Float, y: Float) {
