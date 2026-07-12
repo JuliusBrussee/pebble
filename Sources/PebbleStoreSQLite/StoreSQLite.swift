@@ -40,12 +40,12 @@ public final class SQLiteWorldStore: WorldStore, @unchecked Sendable {
     public func listWorlds() -> [WorldRecord] {
         withLock {
             var records: [WorldRecord] = []
-            query("SELECT json FROM worlds ORDER BY lastPlayed DESC") { statement in
+            query("SELECT json FROM worlds ORDER BY lastPlayed DESC", row: { statement in
                 if let json = self.text(statement, 0),
                    let record = try? JSONDecoder().decode(WorldRecord.self, from: Data(json.utf8)) {
                     records.append(record)
                 }
-            }
+            })
             return records
         }
     }
