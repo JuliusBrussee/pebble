@@ -1,6 +1,6 @@
 # Windows support matrix
 
-Implementation status from current source tree. Work in this porting batch was intentionally not built or run; new rows remain `experimental` until CI evidence exists.
+Implementation status from current source tree and automated gates. New rows remain `experimental` until matching-platform CI compiles and executes them successfully.
 
 | Capability | macOS | Windows | Status | Current source evidence |
 |---|---|---|---|---|
