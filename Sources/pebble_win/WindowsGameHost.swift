@@ -100,6 +100,9 @@ final class WindowsGameHost: GameHost {
     private var grindstoneBottom: ItemStack?
     private var stonecutterInput: ItemStack?
     private var stonecutterSelection = -1
+    private var smithingTemplate: ItemStack?
+    private var smithingBase: ItemStack?
+    private var smithingAddition: ItemStack?
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
     private var pendingWorldDeleteID: String?
@@ -930,6 +933,8 @@ final class WindowsGameHost: GameHost {
                 appendGrindstoneScreen(game: game, width: width, height: height)
             } else if screenKind == "stonecutter" {
                 appendStonecutterScreen(game: game, width: width, height: height)
+            } else if screenKind == "smithing" {
+                appendSmithingScreen(game: game, width: width, height: height)
             } else if screenKind == "inventory" || screenKind == "creative" {
                 appendInventoryScreen(game: game, width: width, height: height)
             } else if screenData?.be?.items != nil {
@@ -1432,6 +1437,31 @@ final class WindowsGameHost: GameHost {
         if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
     }
 
+    private func appendSmithingScreen(game: GameCore, width: Float, height: Float) {
+        guard let player = game.player else { return }
+        let panelWidth: Float = 406, panelHeight: Float = 392
+        let panelX = (width - panelWidth) / 2, panelY = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: panelX, y: panelY, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.08, 0.11, 0.12, 0.98))
+        _ = uiCanvas.text("UPGRADE GEAR", x: panelX + 14, y: panelY + 14, scale: 1.8)
+        inventorySlot(smithingTemplate, x: panelX + 24, y: panelY + 88, selected: false)
+        _ = uiCanvas.text("+", x: panelX + 70, y: panelY + 99, scale: 2)
+        inventorySlot(smithingBase, x: panelX + 96, y: panelY + 88, selected: false)
+        _ = uiCanvas.text("+", x: panelX + 142, y: panelY + 99, scale: 2)
+        inventorySlot(smithingAddition, x: panelX + 168, y: panelY + 88, selected: false)
+        _ = uiCanvas.text("->", x: panelX + 220, y: panelY + 99, scale: 2.2)
+        let output = matchSmithing(smithingTemplate, smithingBase, smithingAddition)
+        inventorySlot(output, x: panelX + 278, y: panelY + 88, selected: true)
+        _ = uiCanvas.text("TEMPLATE", x: panelX + 18, y: panelY + 142, scale: 0.9,
+                          color: SIMD4<Float>(0.62, 0.7, 0.72, 1))
+        _ = uiCanvas.text("BASE", x: panelX + 100, y: panelY + 142, scale: 0.9,
+                          color: SIMD4<Float>(0.62, 0.7, 0.72, 1))
+        _ = uiCanvas.text("MATERIAL", x: panelX + 158, y: panelY + 142, scale: 0.9,
+                          color: SIMD4<Float>(0.62, 0.7, 0.72, 1))
+        appendWorkstationInventory(player: player, panelX: panelX, panelY: panelY)
+        if let carriedStack { inventoryItem(carriedStack, x: screenMousePosition.x + 6, y: screenMousePosition.y + 6) }
+    }
+
     private func appendWorkstationInventory(player: Player, panelX: Float, panelY: Float) {
         let slot: Float = 42, inventoryY = panelY + 220
         for row in 0..<3 { for column in 0..<9 {
@@ -1516,6 +1546,10 @@ final class WindowsGameHost: GameHost {
         }
         if screenOpen, screenKind == "stonecutter" {
             handleStonecutterClick(button: button, game: game)
+            return
+        }
+        if screenOpen, screenKind == "smithing" {
+            handleSmithingClick(button: button, game: game)
             return
         }
         if button == 0, screenOpen, screenKind == "pause" || screenKind == "death" {
@@ -2180,6 +2214,47 @@ final class WindowsGameHost: GameHost {
         stonecutterInput = nil; stonecutterSelection = -1
     }
 
+    private func handleSmithingClick(button: Int, game: GameCore) {
+        guard let player = game.player else { return }
+        let panelX = (lastScreenSize.x - 406) / 2, panelY = (lastScreenSize.y - 392) / 2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        if x >= panelX + 24, x < panelX + 62, y >= panelY + 88, y < panelY + 126 {
+            transferSlot(button: button, get: { self.smithingTemplate }, set: { self.smithingTemplate = $0 })
+        } else if x >= panelX + 96, x < panelX + 134, y >= panelY + 88, y < panelY + 126 {
+            transferSlot(button: button, get: { self.smithingBase }, set: { self.smithingBase = $0 })
+        } else if x >= panelX + 168, x < panelX + 206, y >= panelY + 88, y < panelY + 126 {
+            transferSlot(button: button, get: { self.smithingAddition }, set: { self.smithingAddition = $0 })
+        } else if x >= panelX + 278, x < panelX + 316, y >= panelY + 88, y < panelY + 126 {
+            guard let output = matchSmithing(smithingTemplate, smithingBase, smithingAddition) else { return }
+            if let carried = carriedStack {
+                guard carried.id == output.id,
+                      carried.count + output.count <= itemDef(output.id).maxStack else { return }
+                carried.count += output.count
+            } else { carriedStack = output.copy() }
+            consumeSmithingInput(&smithingTemplate)
+            consumeSmithingInput(&smithingBase)
+            consumeSmithingInput(&smithingAddition)
+            game.advance("use_smithing_table")
+            playUI("block.smithing_table.use")
+        } else if let index = workstationInventoryIndex(panelX: panelX, panelY: panelY) {
+            transferSlot(button: button, get: { player.inventory[index] }, set: { player.inventory[index] = $0 })
+        } else { return }
+        playUI("ui.button.click")
+    }
+
+    private func consumeSmithingInput(_ stack: inout ItemStack?) {
+        stack?.count -= 1
+        if stack?.count ?? 0 <= 0 { stack = nil }
+    }
+
+    private func returnSmithingItems() {
+        guard let game = activeGame, let player = game.player else { return }
+        for stack in [smithingTemplate, smithingBase, smithingAddition].compactMap({ $0 }) {
+            if !player.give(stack) { _ = spawnItem(game.world, player.x, player.y, player.z, stack) }
+        }
+        smithingTemplate = nil; smithingBase = nil; smithingAddition = nil
+    }
+
     private func inventorySlotAtMouse() -> Int? {
         let slot: Float = 42
         let panelWidth = slot * 9 + 28
@@ -2304,6 +2379,7 @@ final class WindowsGameHost: GameHost {
         if screenOpen, screenKind == "anvil", kind != "anvil" { returnAnvilItems() }
         if screenOpen, screenKind == "grindstone", kind != "grindstone" { returnGrindstoneItems() }
         if screenOpen, screenKind == "stonecutter", kind != "stonecutter" { returnStonecutterInput() }
+        if screenOpen, screenKind == "smithing", kind != "smithing" { returnSmithingItems() }
         screenKind = kind; screenData = data; screenOpen = true
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
@@ -2356,6 +2432,7 @@ final class WindowsGameHost: GameHost {
         if screenKind == "anvil" { returnAnvilItems() }
         if screenKind == "grindstone" { returnGrindstoneItems() }
         if screenKind == "stonecutter" { returnStonecutterInput() }
+        if screenKind == "smithing" { returnSmithingItems() }
         externalContainerCommit?()
         externalContainerCommit = nil
         screenOpen = false; textBuffer = ""; screenData = nil; tradingMob = nil
