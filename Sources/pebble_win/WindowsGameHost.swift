@@ -120,6 +120,8 @@ final class WindowsGameHost: GameHost {
     private var multiplayerName = "Player"
     private var multiplayerField = 0
     private var multiplayerMessage = ""
+    private var renameWorldID: String?
+    private var renameWorldName = ""
 
     init(renderer: VulkanRendererBackend, resourcePacks: ResourcePackStack,
          customSkinURL: URL) throws {
@@ -940,6 +942,8 @@ final class WindowsGameHost: GameHost {
                 appendCreateWorldScreen(width: width, height: height)
             } else if screenKind == "multiplayer" {
                 appendMultiplayerScreen(width: width, height: height)
+            } else if screenKind == "rename_world" {
+                appendRenameWorldScreen(width: width, height: height)
             } else if screenKind == "options" {
                 appendOptionsScreen(game: game, width: width, height: height)
             } else if screenKind == "accessibility" {
@@ -1144,10 +1148,11 @@ final class WindowsGameHost: GameHost {
         let buttonY = listY + rowHeight * 5 + 12
         let selectedID = worlds.isEmpty ? nil : worlds[titleWorldSelection].id
         actionButton(worlds.isEmpty ? "CREATE WORLD" : "PLAY SELECTED",
-                     x: listX, y: buttonY, width: 274)
+                     x: listX, y: buttonY, width: 180)
+        actionButton("RENAME", x: listX + 190, y: buttonY, width: 180)
         let deleteTitle = selectedID != nil && pendingWorldDeleteID == selectedID
             ? "CONFIRM DELETE" : "DELETE WORLD"
-        actionButton(deleteTitle, x: listX + 286, y: buttonY, width: 274)
+        actionButton(deleteTitle, x: listX + 380, y: buttonY, width: 180)
         actionButton("NEW WORLD", x: listX, y: buttonY + 46, width: 274)
         actionButton("MULTIPLAYER", x: listX + 286, y: buttonY + 46, width: 274)
         actionButton("OPTIONS", x: listX, y: buttonY + 92, width: 274)
@@ -1216,6 +1221,17 @@ final class WindowsGameHost: GameHost {
         }
         actionButton("CONNECT", x: x + 48, y: y + 292, width: 202)
         actionButton("CANCEL", x: x + 270, y: y + 292, width: 202)
+    }
+
+    private func appendRenameWorldScreen(width: Float, height: Float) {
+        let panelWidth: Float = 520, panelHeight: Float = 220
+        let x = (width - panelWidth) / 2, y = (height - panelHeight) / 2
+        uiCanvas.fillRect(x: x, y: y, width: panelWidth, height: panelHeight,
+                          color: SIMD4<Float>(0.04, 0.055, 0.075, 0.98))
+        uiCanvas.textCentered("RENAME WORLD", centerX: width / 2, y: y + 28, scale: 2.8)
+        textField(renameWorldName + "_", x: x + 48, y: y + 88, width: panelWidth - 96, focused: true)
+        actionButton("SAVE", x: x + 48, y: y + 150, width: 202)
+        actionButton("CANCEL", x: x + 270, y: y + 150, width: 202)
     }
 
     private func appendActionScreen(game: GameCore, width: Float, height: Float) {
@@ -1725,6 +1741,10 @@ final class WindowsGameHost: GameHost {
             handleMultiplayerClick(game: game)
             return
         }
+        if button == 0, screenOpen, screenKind == "rename_world" {
+            handleRenameWorldClick(game: game)
+            return
+        }
         if screenOpen, screenKind == "crafting" {
             handleCraftingClick(button: button, game: game)
             return
@@ -1869,14 +1889,19 @@ final class WindowsGameHost: GameHost {
             return
         }
         let buttonY = listY + rowHeight * 5 + 12
-        if x >= listX && x < listX + 274 && y >= buttonY && y < buttonY + 34 {
+        if x >= listX && x < listX + 180 && y >= buttonY && y < buttonY + 34 {
             if !worlds.isEmpty {
                 game.loadWorld(worlds[titleWorldSelection].id)
                 closeAllScreens()
             } else {
                 beginCreateWorld(game: game)
             }
-        } else if x >= listX + 286 && x < listX + 560 && y >= buttonY && y < buttonY + 34,
+        } else if x >= listX + 190 && x < listX + 370 && y >= buttonY && y < buttonY + 34,
+                  !worlds.isEmpty {
+            renameWorldID = worlds[titleWorldSelection].id
+            renameWorldName = worlds[titleWorldSelection].name
+            screenKind = "rename_world"
+        } else if x >= listX + 380 && x < listX + 560 && y >= buttonY && y < buttonY + 34,
                   !worlds.isEmpty {
             let selected = worlds[titleWorldSelection]
             if pendingWorldDeleteID == selected.id {
@@ -1966,6 +1991,23 @@ final class WindowsGameHost: GameHost {
         else if mx < x + 250 && my >= y + 292 && my < y + 326 { connectFromForm(game: game) }
         else if mx >= x + 270 && my >= y + 292 && my < y + 326 { screenKind = "title" }
         else { return }
+        playUI("ui.button.click")
+    }
+
+    private func saveWorldRename(game: GameCore) {
+        if let renameWorldID { game.renameWorld(renameWorldID, name: renameWorldName) }
+        renameWorldID = nil; renameWorldName = ""; screenKind = "title"
+    }
+
+    private func handleRenameWorldClick(game: GameCore) {
+        let panelWidth: Float = 520, panelHeight: Float = 220
+        let x = (lastScreenSize.x - panelWidth) / 2, y = (lastScreenSize.y - panelHeight) / 2
+        let mx = screenMousePosition.x, my = screenMousePosition.y
+        if mx >= x + 48, mx < x + 250, my >= y + 150, my < y + 184 {
+            saveWorldRename(game: game)
+        } else if mx >= x + 270, mx < x + 472, my >= y + 150, my < y + 184 {
+            renameWorldID = nil; renameWorldName = ""; screenKind = "title"
+        } else { return }
         playUI("ui.button.click")
     }
 
@@ -2772,6 +2814,10 @@ final class WindowsGameHost: GameHost {
                 creativeSearch.append(contentsOf: filtered.prefix(40 - creativeSearch.count))
                 creativeScrollRow = 0
             }
+        } else if screenOpen, screenKind == "rename_world" {
+            if renameWorldName.count < 48 {
+                renameWorldName.append(contentsOf: filtered.prefix(48 - renameWorldName.count))
+            }
         } else if screenOpen, screenKind == "anvil" {
             if anvilName.count < 48 { anvilName.append(contentsOf: filtered.prefix(48 - anvilName.count)) }
         } else if screenOpen, screenKind == "multiplayer" {
@@ -2825,6 +2871,12 @@ final class WindowsGameHost: GameHost {
         } else if screenKind == "creative", code == "Backspace" {
             if !creativeSearch.isEmpty { creativeSearch.removeLast(); creativeScrollRow = 0 }
             return false
+        } else if screenKind == "rename_world", code == "Backspace" {
+            if !renameWorldName.isEmpty { renameWorldName.removeLast() }
+            return false
+        } else if screenKind == "rename_world", code == "Enter" {
+            saveWorldRename(game: game)
+            return false
         } else if screenKind == "title", code == "Enter" {
             let worlds = game.listWorlds()
             if worlds.isEmpty {
@@ -2865,6 +2917,9 @@ final class WindowsGameHost: GameHost {
         if screenKind == "title" { return true }
         if screenKind == "create_world" { screenKind = "title"; return true }
         if screenKind == "multiplayer" { screenKind = "title"; return true }
+        if screenKind == "rename_world" {
+            renameWorldID = nil; renameWorldName = ""; screenKind = "title"; return true
+        }
         if screenKind == "accessibility" { screenKind = "options"; return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()

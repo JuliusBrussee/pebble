@@ -495,6 +495,14 @@ public final class GameCore {
         db.deleteWorld(id)
     }
 
+    public func renameWorld(_ id: String, name: String) {
+        guard var record = db.getWorld(id) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        record.name = trimmed
+        db.putWorld(record)
+    }
+
     // ===========================================================================
     // World lifecycle
     // ===========================================================================
