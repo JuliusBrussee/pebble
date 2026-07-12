@@ -59,11 +59,11 @@ Copy-Item (Join-Path $Root "packaging/THIRD-PARTY-NOTICES.txt") (Join-Path $Outp
 Copy-Item (Join-Path $Root "packaging/README-WINDOWS.txt") $OutputDirectory
 Copy-Item (Join-Path $ShaderOutput "*.spv") (Join-Path $OutputDirectory "shaders")
 
-$SDLSearch = @(
+$SDLSearch = @(@(
     (Join-Path $Bin "SDL3.dll"),
     $(if ($env:SDL3_DIR) { Join-Path $env:SDL3_DIR "bin/SDL3.dll" } else { "" }),
     $(if ($env:VCPKG_ROOT) { Join-Path $env:VCPKG_ROOT "installed/x64-windows/bin/SDL3.dll" } else { "" })
-) | Where-Object { $_ -and (Test-Path $_) }
+) | Where-Object { $_ -and (Test-Path $_) })
 if ($SDLSearch.Count -eq 0) { throw "SDL3.dll not found; set SDL3_DIR or install x64-windows SDL3 through vcpkg" }
 Copy-Item $SDLSearch[0] (Join-Path $OutputDirectory "SDL3.dll")
 
@@ -81,11 +81,11 @@ foreach ($DLL in $RuntimeDLLs) { Copy-Item $DLL.FullName (Join-Path $OutputDirec
 
 $MSVCRuntimeNames = @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll")
 foreach ($Name in $MSVCRuntimeNames) {
-    $Candidates = @(
+    $Candidates = @(@(
         (Join-Path $Bin $Name),
         (Join-Path $env:SystemRoot "System32/$Name"),
         $(if ($env:VCToolsRedistDir) { Join-Path $env:VCToolsRedistDir "x64/Microsoft.VC143.CRT/$Name" } else { "" })
-    ) | Where-Object { $_ -and (Test-Path $_) }
+    ) | Where-Object { $_ -and (Test-Path $_) })
     if ($Candidates.Count -eq 0) { throw "MSVC runtime dependency missing: $Name" }
     Copy-Item $Candidates[0] (Join-Path $OutputDirectory $Name)
 }
