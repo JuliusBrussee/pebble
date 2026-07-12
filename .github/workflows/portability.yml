@@ -76,7 +76,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Swift
-        uses: swift-actions/setup-swift@v2
+        uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.2-release
+          swift-build: 6.2-RELEASE
       - name: Reject regold in CI
         shell: pwsh
         run: |
@@ -154,7 +157,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: swift-actions/setup-swift@v2
+      - uses: compnerd/gha-setup-swift@v0.4.0
+        with:
+          swift-version: swift-6.2-release
+          swift-build: 6.2-RELEASE
       - name: Install SDL3 and Vulkan SDK
         shell: pwsh
         run: |
