@@ -955,6 +955,8 @@ final class WindowsGameHost: GameHost {
                 appendAccessibilityScreen(game: game, width: width, height: height)
             } else if screenKind == "controls" {
                 appendControlsScreen(game: game, width: width, height: height)
+            } else if screenKind == "resource_packs" {
+                appendResourcePacksScreen(game: game, width: width, height: height)
             } else if screenKind == "trading" {
                 appendTradingScreen(game: game, width: width, height: height)
             } else if screenKind == "sign" {
@@ -1087,6 +1089,7 @@ final class WindowsGameHost: GameHost {
             "INVERT Y  \(game.settings.invertY ? "ON" : "OFF")",
             "FRAME LIMIT  \(game.settings.maxFps >= 250 ? "UNLIMITED" : "\(game.settings.maxFps) FPS")",
             "ACCESSIBILITY...",
+            "RESOURCE PACKS...",
             "MASTER VOLUME  \(Int((game.settings.volumes["master"] ?? 0.8) * 100))%",
             "MUSIC VOLUME  \(Int((game.settings.volumes["music"] ?? 0.5) * 100))%",
         ]
@@ -1134,6 +1137,31 @@ final class WindowsGameHost: GameHost {
         }
         actionButton("DONE", x: width / 2 - 122, y: top + 44 + Float((controlBindings.count + 1) / 2) * 40,
                      width: 244)
+    }
+
+    private func availableResourcePacks() -> [String] {
+        let directory = customSkinURL.deletingLastPathComponent().appendingPathComponent("resourcepacks", isDirectory: true)
+        let urls = (try? FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        return urls.filter { $0.pathExtension.lowercased() == "zip" }.map(\.lastPathComponent).sorted()
+    }
+
+    private func appendResourcePacksScreen(game: GameCore, width: Float, height: Float) {
+        uiCanvas.textCentered("RESOURCE PACKS", centerX: width / 2, y: height * 0.12, scale: 4)
+        let packs = availableResourcePacks(), selected = game.settings.resourcePacks ?? []
+        let x = width / 2 - 260, y = height * 0.24
+        if packs.isEmpty {
+            uiCanvas.textCentered("PUT ZIP FILES IN RESOURCEPACKS FOLDER", centerX: width / 2,
+                                  y: y + 40, scale: 1.3, color: SIMD4<Float>(0.7, 0.75, 0.8, 1))
+        }
+        for (index, pack) in packs.prefix(10).enumerated() {
+            let active = selected.contains(pack)
+            actionButton("\(active ? "ON" : "OFF")  \(pack)", x: x, y: y + Float(index) * 40, width: 520)
+        }
+        uiCanvas.textCentered("TOPMOST ENABLED PACK HAS PRIORITY - RESTART TO APPLY",
+                              centerX: width / 2, y: y + 418, scale: 1,
+                              color: SIMD4<Float>(0.62, 0.68, 0.72, 1))
+        actionButton("DONE", x: width / 2 - 130, y: y + 446, width: 260)
     }
 
     private func appendTitleScreen(game: GameCore, width: Float, height: Float) {
@@ -1780,6 +1808,10 @@ final class WindowsGameHost: GameHost {
             handleControlsClick(game: game)
             return
         }
+        if button == 0, screenOpen, screenKind == "resource_packs" {
+            handleResourcePacksClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "title" {
             handleTitleClick(game: game)
             return
@@ -2088,13 +2120,14 @@ final class WindowsGameHost: GameHost {
             let current = limits.firstIndex(of: game.settings.maxFps) ?? 1
             game.settings.maxFps = limits[(current + 1) % limits.count]
         case 13: screenKind = "accessibility"; menuSelection = 0; moveMenuSelection(0)
-        case 14:
+        case 14: screenKind = "resource_packs"
+        case 15:
             let value = game.settings.volumes["master"] ?? 0.8
             game.settings.volumes["master"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 15:
+        case 16:
             let value = game.settings.volumes["music"] ?? 0.5
             game.settings.volumes["music"] = value >= 1 ? 0 : min(1, value + 0.1)
-        case 16:
+        case 17:
             game.applySettings(); screenKind = screenReturnKind
         default: return
         }
@@ -2144,6 +2177,25 @@ final class WindowsGameHost: GameHost {
             } else { return }
         } else { return }
         game.applySettings()
+        playUI("ui.button.click")
+    }
+
+    private func handleResourcePacksClick(game: GameCore) {
+        let packs = availableResourcePacks()
+        let x = lastScreenSize.x / 2 - 260, y = lastScreenSize.y * 0.24
+        let mx = screenMousePosition.x, my = screenMousePosition.y
+        if mx >= x, mx < x + 520, my >= y, my < y + Float(min(10, packs.count)) * 40 {
+            let index = Int((my - y) / 40)
+            guard index < packs.count, my < y + Float(index) * 40 + 34 else { return }
+            var selected = game.settings.resourcePacks ?? []
+            if let existing = selected.firstIndex(of: packs[index]) { selected.remove(at: existing) }
+            else { selected.insert(packs[index], at: 0) }
+            game.settings.resourcePacks = selected
+            game.applySettings()
+        } else if mx >= lastScreenSize.x / 2 - 130, mx < lastScreenSize.x / 2 + 130,
+                  my >= y + 446, my < y + 480 {
+            game.applySettings(); screenKind = "options"
+        } else { return }
         playUI("ui.button.click")
     }
 
@@ -3011,7 +3063,7 @@ final class WindowsGameHost: GameHost {
 
     private func moveMenuSelection(_ delta: Int) {
         let count = screenKind == "death" ? 2 : screenKind == "pause" ? 4 :
-                    screenKind == "accessibility" ? 9 : 17
+                    screenKind == "accessibility" ? 9 : 18
         menuSelection = (menuSelection + delta + count) % count
         let centerX = lastScreenSize.x / 2
         switch screenKind {
@@ -3058,6 +3110,7 @@ final class WindowsGameHost: GameHost {
         }
         if screenKind == "accessibility" { screenKind = "options"; return true }
         if screenKind == "controls" { controlBindingKey = nil; screenKind = "options"; return true }
+        if screenKind == "resource_packs" { screenKind = "options"; return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true
