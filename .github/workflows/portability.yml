@@ -5,6 +5,10 @@ on:
     branches: [main, port/**]
   pull_request:
 
+concurrency:
+  group: portability-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   macos-selected:
     name: macOS selected targets and Metal build
