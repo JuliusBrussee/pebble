@@ -2002,7 +2002,7 @@ PBVulkanStatus pb_vulkan_renderer_present_frame3(PBVulkanChunkRenderer *renderer
                             0, 1, &renderer->composite_descriptor_set, 0, NULL);
     float composite_constants[4] = {1, 0, 0, 0};
     memcpy(&composite_constants[0], shared_uniforms + 132, 4);
-    memcpy(&composite_constants[2], shared_uniforms + 176, 4);
+    memcpy(&composite_constants[2], shared_uniforms + 176, 8);
     float packed_environment = 0;
     memcpy(&packed_environment, shared_uniforms + 188, 4);
     composite_constants[1] = packed_environment >= 2 ? 1 : 0;

@@ -7,13 +7,19 @@ layout(push_constant) uniform CompositeFrame { vec4 params; } frame;
 layout(location = 0) out vec4 outColor;
 
 void main() {
-    vec3 scene = texture(sceneTexture, uv).rgb;
+    float darkness = clamp(frame.params.z, 0.0, 1.0);
+    float portalWarp = clamp(frame.params.w, 0.0, 1.0);
+    vec2 centeredUV = uv - 0.5;
+    float radius = length(centeredUV);
+    vec2 sampleUV = clamp(uv + centeredUV * sin(radius * 36.0) * portalWarp * 0.035, 0.0, 1.0);
+    vec3 scene = texture(sceneTexture, sampleUV).rgb;
     float ultra = frame.params.y;
     vec3 bloom = max(texture(bloomTexture, uv).rgb - vec3(0.82), vec3(0.0)) * mix(0.08, 0.32, ultra);
     vec3 color = scene + bloom;
     vec3 mapped = clamp((color * (2.51 * color + 0.03)) /
                         (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
     mapped = pow(mapped, vec3(1.0 / max(0.35, frame.params.x)));
+    mapped *= 1.0 - darkness * 0.82;
     if (ultra > 0.5) {
         vec2 centered = uv - 0.5;
         float vignette = 1.0 - smoothstep(0.28, 0.78, dot(centered, centered));

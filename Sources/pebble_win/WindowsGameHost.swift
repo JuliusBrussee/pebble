@@ -247,7 +247,8 @@ final class WindowsGameHost: GameHost {
             light: SIMD4<Float>(dayLight, uniforms.gamma, ambient, shadowsOn ? 1 : 0),
             fog: SIMD4<Float>(uniforms.fogStart, uniforms.fogEnd, 0, 1),
             fogColor: fogColor,
-            misc: SIMD4<Float>(Float(timeSec), game.settings.clouds ? 1 : 0,
+            misc: SIMD4<Float>(Float(cam.darkness),
+                               game.settings.reduceMotion ? 0 : Float(cam.portalWarp) * (game.settings.reducedFlashes ? 0.2 : 1),
                                Float(world.dim.rawValue),
                                (world.raining ? 1 : 0) + (uniforms.ultraOn ? 2 : 0)))
         let maximumDistanceSquared = (renderDistance + 24) * (renderDistance + 24)
@@ -1221,9 +1222,12 @@ final class WindowsGameHost: GameHost {
     private func actionButton(_ title: String, x: Float, y: Float, width: Float) {
         let hovered = screenMousePosition.x >= x && screenMousePosition.x < x + width &&
                       screenMousePosition.y >= y && screenMousePosition.y < y + 34
+        let contrast = activeGame?.settings.highContrast == true
         uiCanvas.fillRect(x: x, y: y, width: width, height: 34,
-                          color: hovered ? SIMD4<Float>(0.35, 0.42, 0.58, 0.96)
-                                         : SIMD4<Float>(0.16, 0.18, 0.23, 0.96))
+                          color: contrast
+                              ? (hovered ? SIMD4<Float>(0.9, 0.9, 0.15, 1) : SIMD4<Float>(0.02, 0.02, 0.02, 1))
+                              : (hovered ? SIMD4<Float>(0.35, 0.42, 0.58, 0.96)
+                                         : SIMD4<Float>(0.16, 0.18, 0.23, 0.96)))
         uiCanvas.textCentered(title, centerX: x + width / 2, y: y + 10, scale: 1.5)
     }
 
@@ -1584,8 +1588,9 @@ final class WindowsGameHost: GameHost {
     }
 
     private func inventorySlot(_ stack: ItemStack?, x: Float, y: Float, selected: Bool) {
+        let contrast = activeGame?.settings.highContrast == true
         uiCanvas.fillRect(x: x, y: y, width: 38, height: 38,
-                          color: selected ? SIMD4<Float>(0.8, 0.82, 0.9, 1)
+                          color: selected ? (contrast ? SIMD4<Float>(1, 0.9, 0.1, 1) : SIMD4<Float>(0.8, 0.82, 0.9, 1))
                                           : SIMD4<Float>(0.025, 0.03, 0.04, 0.95))
         uiCanvas.fillRect(x: x + 2, y: y + 2, width: 34, height: 34,
                           color: SIMD4<Float>(0.16, 0.17, 0.2, 1))
