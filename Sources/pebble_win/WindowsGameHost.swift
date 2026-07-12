@@ -109,6 +109,7 @@ final class WindowsGameHost: GameHost {
     private var creativeSearch = ""
     private var hoveredStack: ItemStack?
     private var menuSelection = 0
+    private var controlBindingKey: String?
     private var subtitles: [(text: String, frames: Int)] = []
     private var titleWorldSelection = 0
     private var titleWorldOffset = 0
@@ -952,6 +953,8 @@ final class WindowsGameHost: GameHost {
                 appendOptionsScreen(game: game, width: width, height: height)
             } else if screenKind == "accessibility" {
                 appendAccessibilityScreen(game: game, width: width, height: height)
+            } else if screenKind == "controls" {
+                appendControlsScreen(game: game, width: width, height: height)
             } else if screenKind == "trading" {
                 appendTradingScreen(game: game, width: width, height: height)
             } else if screenKind == "sign" {
@@ -1080,7 +1083,7 @@ final class WindowsGameHost: GameHost {
             "BLOOM  \(game.settings.bloom ? "ON" : "OFF")",
             "BRIGHTNESS  \(Int(game.settings.gamma * 100))%",
             "VIEW BOBBING  \(game.settings.viewBobbing ? "ON" : "OFF")",
-            "SENSITIVITY  \(Int(game.settings.sensitivity * 100))%",
+            "CONTROLS...",
             "INVERT Y  \(game.settings.invertY ? "ON" : "OFF")",
             "FRAME LIMIT  \(game.settings.maxFps >= 250 ? "UNLIMITED" : "\(game.settings.maxFps) FPS")",
             "ACCESSIBILITY...",
@@ -1109,6 +1112,27 @@ final class WindowsGameHost: GameHost {
             actionButton(title, x: x, y: y + Float(index) * 42, width: 380)
         }
         actionButton("DONE", x: x, y: y + Float(rows.count) * 42, width: 380)
+    }
+
+    private let controlBindings: [(key: String, title: String)] = [
+        ("forward", "FORWARD"), ("back", "BACK"), ("left", "LEFT"), ("right", "RIGHT"),
+        ("jump", "JUMP"), ("sneak", "SNEAK"), ("sprint", "SPRINT"), ("inventory", "INVENTORY"),
+        ("drop", "DROP ITEM"), ("chat", "CHAT"), ("command", "COMMAND"),
+        ("perspective", "PERSPECTIVE"), ("swapOffhand", "SWAP OFFHAND"),
+    ]
+
+    private func appendControlsScreen(game: GameCore, width: Float, height: Float) {
+        uiCanvas.textCentered("CONTROLS", centerX: width / 2, y: height * 0.1, scale: 4)
+        let left = width / 2 - 250, top = height * 0.2
+        actionButton("SENSITIVITY  \(Int(game.settings.sensitivity * 100))%", x: left, y: top, width: 244)
+        actionButton("INVERT Y  \(game.settings.invertY ? "ON" : "OFF")", x: left + 256, y: top, width: 244)
+        for (index, binding) in controlBindings.enumerated() {
+            let x = left + Float(index % 2) * 256, y = top + 44 + Float(index / 2) * 40
+            let value = controlBindingKey == binding.key ? "PRESS KEY" : (game.keybinds[binding.key] ?? "?")
+            actionButton("\(binding.title): \(value)", x: x, y: y, width: 244)
+        }
+        actionButton("DONE", x: width / 2 - 122, y: top + 44 + Float((controlBindings.count + 1) / 2) * 40,
+                     width: 244)
     }
 
     private func appendTitleScreen(game: GameCore, width: Float, height: Float) {
@@ -1751,6 +1775,10 @@ final class WindowsGameHost: GameHost {
             handleAccessibilityClick(game: game)
             return
         }
+        if button == 0, screenOpen, screenKind == "controls" {
+            handleControlsClick(game: game)
+            return
+        }
         if button == 0, screenOpen, screenKind == "title" {
             handleTitleClick(game: game)
             return
@@ -2052,7 +2080,7 @@ final class WindowsGameHost: GameHost {
         case 7: game.settings.bloom.toggle()
         case 8: game.settings.gamma = game.settings.gamma >= 1 ? 0 : min(1, game.settings.gamma + 0.2)
         case 9: game.settings.viewBobbing.toggle()
-        case 10: game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
+        case 10: screenKind = "controls"; controlBindingKey = nil
         case 11: game.settings.invertY.toggle()
         case 12:
             let limits = [30, 60, 120, 144, 250]
@@ -2089,6 +2117,28 @@ final class WindowsGameHost: GameHost {
         case 7: game.applySettings(); screenKind = "options"
         default: return
         }
+        game.applySettings()
+        playUI("ui.button.click")
+    }
+
+    private func handleControlsClick(game: GameCore) {
+        let left = lastScreenSize.x / 2 - 250, top = lastScreenSize.y * 0.2
+        let x = screenMousePosition.x, y = screenMousePosition.y
+        if x >= left, x < left + 244, y >= top, y < top + 34 {
+            game.settings.sensitivity = game.settings.sensitivity >= 1 ? 0.1 : min(1, game.settings.sensitivity + 0.1)
+        } else if x >= left + 256, x < left + 500, y >= top, y < top + 34 {
+            game.settings.invertY.toggle()
+        } else if y >= top + 44 {
+            let column = x >= left + 256 ? 1 : 0
+            guard x >= left, x < left + 500 else { return }
+            let row = Int((y - top - 44) / 40)
+            let index = row * 2 + column
+            if index < controlBindings.count, y < top + 44 + Float(row) * 40 + 34 {
+                controlBindingKey = controlBindings[index].key
+            } else if y >= top + 44 + Float((controlBindings.count + 1) / 2) * 40 {
+                game.applySettings(); screenKind = "options"; controlBindingKey = nil
+            } else { return }
+        } else { return }
         game.applySettings()
         playUI("ui.button.click")
     }
@@ -2866,7 +2916,13 @@ final class WindowsGameHost: GameHost {
     }
     func screenKey(_ code: String, game: GameCore) -> Bool {
         guard screenOpen else { return false }
-        if ["pause", "death", "options", "accessibility"].contains(screenKind),
+        if screenKind == "controls", let binding = controlBindingKey {
+            game.keybinds[binding] = code
+            controlBindingKey = nil
+            game.applySettings()
+            playUI("ui.button.click")
+            return false
+        } else if ["pause", "death", "options", "accessibility"].contains(screenKind),
            (code == "ArrowUp" || code == "ArrowDown") {
             moveMenuSelection(code == "ArrowUp" ? -1 : 1)
             return false
@@ -2997,6 +3053,7 @@ final class WindowsGameHost: GameHost {
             renameWorldID = nil; renameWorldName = ""; screenKind = "title"; return true
         }
         if screenKind == "accessibility" { screenKind = "options"; return true }
+        if screenKind == "controls" { controlBindingKey = nil; screenKind = "options"; return true }
         if screenKind == "options" { screenKind = screenReturnKind; return true }
         closeAllScreens()
         return true
