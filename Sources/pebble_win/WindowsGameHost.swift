@@ -2452,7 +2452,19 @@ final class WindowsGameHost: GameHost {
         if screenOpen, screenKind == "stonecutter", kind != "stonecutter" { returnStonecutterInput() }
         if screenOpen, screenKind == "smithing", kind != "smithing" { returnSmithingItems() }
         if screenOpen, screenKind == "beacon", kind != "beacon" { returnBeaconPayment() }
-        screenKind = kind; screenData = data; screenOpen = true
+        if kind == "ender_chest", let player = activeGame?.player {
+            let proxy = BlockEntityData(type: "ender_chest", x: 0, y: 0, z: 0)
+            proxy.items = player.enderChest
+            externalContainerCommit = { [weak player, weak proxy] in
+                if let items = proxy?.items { player?.enderChest = items }
+            }
+            var container = ScreenData()
+            container.be = proxy
+            container.title = "Ender Chest"
+            screenKind = kind; screenData = container; screenOpen = true
+        } else {
+            screenKind = kind; screenData = data; screenOpen = true
+        }
         if kind == "beacon" { beaconPendingPower = data?.be?.primary }
         if kind == "enchanting", let game = activeGame {
             var shelves = 0
